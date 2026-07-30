@@ -1,0 +1,5 @@
+python-telegram-bot
+aiohttp
+psutil
+requests
+aiofiles

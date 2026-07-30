@@ -1843,6 +1843,11 @@ app.post('/api/telegram-bot/start', async (req: Request, res: Response) => {
       logs: [`[${new Date().toLocaleTimeString()}] در حال راه‌اندازی ربات تلگرام...\n`]
     };
 
+    backgroundTasks.set('telegram_bot_process', { task: taskData });
+
+    // Ensure python dependencies (aiohttp, etc.) are installed
+    await installPythonRequirements(TELEGRAM_BOT_DIR, taskData.logs);
+
     const child = spawn('python3', ['telegram_bot.py'], {
       cwd: TELEGRAM_BOT_DIR,
       detached: true,
