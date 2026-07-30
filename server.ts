@@ -783,7 +783,7 @@ app.get('/api/sqlite/table-data', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Table name is required' });
     }
     const limitParam = req.query.limit as string;
-    const limit = (limitParam && !isNaN(parseInt(limitParam, 10))) ? parseInt(limitParam, 10) : 100;
+    const limit = (limitParam && !isNaN(parseInt(limitParam, 10))) ? parseInt(limitParam, 10) : 0;
 
     const pyScript = `import sqlite3, json, sys
 db_path = sys.argv[1]
@@ -803,7 +803,11 @@ if not cursor.fetchone():
 cursor.execute(f'PRAGMA table_info("{table_name}")')
 columns = [{"name": r[1], "type": r[2]} for r in cursor.fetchall()]
 
-cursor.execute(f'SELECT * FROM "{table_name}" LIMIT {limit}')
+if limit > 0:
+    cursor.execute(f'SELECT * FROM "{table_name}" LIMIT {limit}')
+else:
+    cursor.execute(f'SELECT * FROM "{table_name}"')
+
 rows = [dict(r) for r in cursor.fetchall()]
 conn.close()
 
