@@ -15,13 +15,6 @@ const req = typeof require !== 'undefined'
   : createRequire(typeof import.meta !== 'undefined' && import.meta.url ? import.meta.url : path.join(process.cwd(), 'server.js'));
 const archiver = req('archiver');
 
-let DatabaseSync: any;
-try {
-  DatabaseSync = req('node:sqlite').DatabaseSync;
-} catch (e) {
-  console.error('Failed to load node:sqlite:', e);
-}
-
 
 const execAsync = promisify(exec);
 
@@ -755,21 +748,24 @@ app.get('/api/files/read', async (req: Request, res: Response) => {
   }
 });
 
-// SQLite DB File reading endpoints
+// SQLite DB File reading endpoints (Python backed for universal Node.js compatibility)
 app.get('/api/sqlite/tables', async (req: Request, res: Response) => {
   try {
     const dbPath = req.query.path as string;
     if (!dbPath || !fs.existsSync(dbPath)) {
       return res.status(404).json({ error: 'Database file not found' });
     }
-    if (!DatabaseSync) {
-      return res.status(500).json({ error: 'SQLite is not supported on this Node.js version' });
-    }
-    const db = new DatabaseSync(dbPath);
-    const query = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-    const tables = query.all() as { name: string }[];
-    db.close();
-    res.json({ tables: tables.map(t => t.name) });
+    const pyScript = `import sqlite3, json, sys
+conn = sqlite3.connect(sys.argv[1])
+cursor = conn.cursor()
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+rows = cursor.fetchall()
+conn.close()
+print(json.dumps([r[0] for r in rows]))`;
+
+    const { stdout } = await execAsync(`python3 -c '${pyScript}' "${dbPath.replace(/"/g, '\\"')}"`);
+    const tables = JSON.parse(stdout.trim());
+    res.json({ tables });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -785,29 +781,39 @@ app.get('/api/sqlite/table-data', async (req: Request, res: Response) => {
     if (!table) {
       return res.status(400).json({ error: 'Table name is required' });
     }
-    if (!DatabaseSync) {
-      return res.status(500).json({ error: 'SQLite is not supported on this Node.js version' });
-    }
-    const db = new DatabaseSync(dbPath);
-    // Validate table name
-    const tablesQuery = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?");
-    const exists = tablesQuery.all(table);
-    if (exists.length === 0) {
-      db.close();
-      return res.status(400).json({ error: 'Invalid table name' });
-    }
     const limitParam = req.query.limit as string;
-    let limitClause = '';
-    if (limitParam && !isNaN(parseInt(limitParam, 10))) {
-      limitClause = ` LIMIT ${parseInt(limitParam, 10)}`;
+    const limit = (limitParam && !isNaN(parseInt(limitParam, 10))) ? parseInt(limitParam, 10) : 100;
+
+    const pyScript = `import sqlite3, json, sys
+db_path = sys.argv[1]
+table_name = sys.argv[2]
+limit = int(sys.argv[3])
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+cursor = conn.cursor()
+
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table_name,))
+if not cursor.fetchone():
+    conn.close()
+    print(json.dumps({"error": "Invalid table name"}))
+    sys.exit(0)
+
+cursor.execute(f"PRAGMA table_info(\\\"{table_name}\\\")")
+columns = [{"name": r[1], "type": r[2]} for r in cursor.fetchall()]
+
+cursor.execute(f"SELECT * FROM \\\"{table_name}\\\" LIMIT {limit}")
+rows = [dict(r) for r in cursor.fetchall()]
+conn.close()
+
+print(json.dumps({"columns": columns, "rows": rows}))`;
+
+    const { stdout } = await execAsync(`python3 -c '${pyScript}' "${dbPath.replace(/"/g, '\\"')}" "${table.replace(/"/g, '\\"')}" ${limit}`);
+    const result = JSON.parse(stdout.trim());
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
     }
-    const dataQuery = db.prepare(`SELECT * FROM "${table}"${limitClause}`);
-    const rows = dataQuery.all() as any[];
-    const columnsQuery = db.prepare(`PRAGMA table_info("${table}")`);
-    const columnsInfo = columnsQuery.all() as { name: string; type: string }[];
-    const columns = columnsInfo.map(c => ({ name: c.name, type: c.type }));
-    db.close();
-    res.json({ columns, rows });
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
