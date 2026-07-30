@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import os from 'os';
-import { exec, spawn, ChildProcess } from 'child_process';
+import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import cors from 'cors';
 import multer from 'multer';
@@ -17,6 +17,7 @@ const archiver = req('archiver');
 
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 function safeMoveFile(src: string, dest: string) {
   try {
@@ -763,7 +764,7 @@ rows = cursor.fetchall()
 conn.close()
 print(json.dumps([r[0] for r in rows]))`;
 
-    const { stdout } = await execAsync(`python3 -c '${pyScript}' "${dbPath.replace(/"/g, '\\"')}"`);
+    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath]);
     const tables = JSON.parse(stdout.trim());
     res.json({ tables });
   } catch (err: any) {
@@ -799,16 +800,16 @@ if not cursor.fetchone():
     print(json.dumps({"error": "Invalid table name"}))
     sys.exit(0)
 
-cursor.execute(f"PRAGMA table_info(\\\"{table_name}\\\")")
+cursor.execute(f'PRAGMA table_info("{table_name}")')
 columns = [{"name": r[1], "type": r[2]} for r in cursor.fetchall()]
 
-cursor.execute(f"SELECT * FROM \\\"{table_name}\\\" LIMIT {limit}")
+cursor.execute(f'SELECT * FROM "{table_name}" LIMIT {limit}')
 rows = [dict(r) for r in cursor.fetchall()]
 conn.close()
 
 print(json.dumps({"columns": columns, "rows": rows}))`;
 
-    const { stdout } = await execAsync(`python3 -c '${pyScript}' "${dbPath.replace(/"/g, '\\"')}" "${table.replace(/"/g, '\\"')}" ${limit}`);
+    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath, table, String(limit)]);
     const result = JSON.parse(stdout.trim());
     if (result.error) {
       return res.status(400).json({ error: result.error });
