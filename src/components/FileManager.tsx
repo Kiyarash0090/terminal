@@ -22,7 +22,14 @@ import {
   Copy,
   GitCommit,
   Database,
-  CornerUpLeft
+  CornerUpLeft,
+  Plus,
+  Play,
+  Terminal,
+  Code2,
+  CheckCircle2,
+  AlertCircle,
+  Edit3
 } from 'lucide-react';
 import { FileItem, Language } from '../types';
 import { translations } from '../locales/translations';
@@ -60,6 +67,209 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
   const [dbTableData, setDbTableData] = useState<{ columns: { name: string; type: string }[]; rows: any[] } | null>(null);
   const [dbLoading, setDbLoading] = useState<boolean>(false);
   const [dbError, setDbError] = useState<string | null>(null);
+
+  // SQLite Editor & SQL Console States
+  const [dbMode, setDbMode] = useState<'table' | 'sql'>('table');
+  const [customSql, setCustomSql] = useState<string>('');
+  const [isSqlExecuting, setIsSqlExecuting] = useState<boolean>(false);
+  const [sqlResult, setSqlResult] = useState<{ success: boolean; changes?: number; rows?: any[]; columns?: { name: string }[]; error?: string } | null>(null);
+  const [editingDbRow, setEditingDbRow] = useState<{ isNew: boolean; rowData: Record<string, any>; originalRow?: Record<string, any> } | null>(null);
+  const [deletingDbRow, setDeletingDbRow] = useState<Record<string, any> | null>(null);
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
+  const [isDeletingLoading, setIsDeletingLoading] = useState<boolean>(false);
+
+  const refetchDbTableData = async () => {
+    if (!viewingDbFile) return;
+    setDbLoading(true);
+    setDbError(null);
+    try {
+      if (selectedDbTable) {
+        const res = await fetch(`/api/sqlite/table-data?path=${encodeURIComponent(viewingDbFile.path)}&table=${encodeURIComponent(selectedDbTable)}`, {
+          headers: { 'x-auth-token': token || '' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setDbTableData(data);
+        }
+      }
+      const tablesRes = await fetch(`/api/sqlite/tables?path=${encodeURIComponent(viewingDbFile.path)}`, {
+        headers: { 'x-auth-token': token || '' }
+      });
+      if (tablesRes.ok) {
+        const tablesData = await tablesRes.json();
+        setDbTables(tablesData.tables || []);
+      }
+    } catch (e: any) {
+      setDbError(e.message || 'Error refreshing table');
+    } finally {
+      setDbLoading(false);
+    }
+  };
+
+  const handleExecuteCustomSql = async (sqlToRun?: string) => {
+    const query = sqlToRun || customSql;
+    if (!viewingDbFile || !query.trim()) return;
+    setIsSqlExecuting(true);
+    setSqlResult(null);
+    try {
+      const res = await fetch('/api/sqlite/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({
+          dbPath: viewingDbFile.path,
+          sql: query
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSqlResult({
+          success: true,
+          changes: data.changes,
+          rows: data.rows,
+          columns: data.columns
+        });
+        refetchDbTableData();
+      } else {
+        setSqlResult({
+          success: false,
+          error: data.error || 'Failed to execute query'
+        });
+      }
+    } catch (e: any) {
+      setSqlResult({
+        success: false,
+        error: e.message || 'Error executing query'
+      });
+    } finally {
+      setIsSqlExecuting(false);
+    }
+  };
+
+  const confirmDeleteDbRow = async () => {
+    if (!viewingDbFile || !selectedDbTable || !dbTableData || !deletingDbRow) return;
+    setIsDeletingLoading(true);
+    setRowActionError(null);
+
+    const whereParts: string[] = [];
+    const params: any[] = [];
+    dbTableData.columns.forEach(col => {
+      const val = deletingDbRow[col.name];
+      if (val === null || val === undefined) {
+        whereParts.push(`"${col.name}" IS NULL`);
+      } else {
+        whereParts.push(`"${col.name}" = ?`);
+        params.push(val);
+      }
+    });
+
+    const sql = `DELETE FROM "${selectedDbTable}" WHERE ${whereParts.join(' AND ')}`;
+    try {
+      const res = await fetch('/api/sqlite/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({
+          dbPath: viewingDbFile.path,
+          sql,
+          params
+        })
+      });
+      if (res.ok) {
+        setDeletingDbRow(null);
+        refetchDbTableData();
+      } else {
+        const err = await res.json();
+        setRowActionError(err.error || 'Failed to delete row');
+      }
+    } catch (e: any) {
+      setRowActionError(e.message || 'Error deleting row');
+    } finally {
+      setIsDeletingLoading(false);
+    }
+  };
+
+  const handleSaveDbRow = async () => {
+    if (!viewingDbFile || !selectedDbTable || !editingDbRow || !dbTableData) return;
+    setRowActionError(null);
+    try {
+      if (editingDbRow.isNew) {
+        const colNames = dbTableData.columns.map(c => `"${c.name}"`);
+        const placeholders = dbTableData.columns.map(() => '?');
+        const params = dbTableData.columns.map(c => {
+          const val = editingDbRow.rowData[c.name];
+          return (val === '' || val === undefined) ? null : val;
+        });
+
+        const sql = `INSERT INTO "${selectedDbTable}" (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`;
+        const res = await fetch('/api/sqlite/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          },
+          body: JSON.stringify({
+            dbPath: viewingDbFile.path,
+            sql,
+            params
+          })
+        });
+        if (res.ok) {
+          setEditingDbRow(null);
+          refetchDbTableData();
+        } else {
+          const err = await res.json();
+          setRowActionError(err.error || 'Failed to insert row');
+        }
+      } else {
+        const setParts: string[] = [];
+        const params: any[] = [];
+        dbTableData.columns.forEach(col => {
+          setParts.push(`"${col.name}" = ?`);
+          const val = editingDbRow.rowData[col.name];
+          params.push((val === '' || val === undefined) ? null : val);
+        });
+
+        const whereParts: string[] = [];
+        dbTableData.columns.forEach(col => {
+          const origVal = editingDbRow.originalRow?.[col.name];
+          if (origVal === null || origVal === undefined) {
+            whereParts.push(`"${col.name}" IS NULL`);
+          } else {
+            whereParts.push(`"${col.name}" = ?`);
+            params.push(origVal);
+          }
+        });
+
+        const sql = `UPDATE "${selectedDbTable}" SET ${setParts.join(', ')} WHERE ${whereParts.join(' AND ')}`;
+        const res = await fetch('/api/sqlite/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          },
+          body: JSON.stringify({
+            dbPath: viewingDbFile.path,
+            sql,
+            params
+          })
+        });
+        if (res.ok) {
+          setEditingDbRow(null);
+          refetchDbTableData();
+        } else {
+          const err = await res.json();
+          setRowActionError(err.error || 'Failed to update row');
+        }
+      }
+    } catch (e: any) {
+      setRowActionError(e.message || 'Error saving row');
+    }
+  };
 
   // Fetch SQLite Table Data
   useEffect(() => {
@@ -949,18 +1159,51 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
         </div>
       )}
 
-      {/* SQLite Database Viewer Modal */}
+      {/* SQLite Database Viewer & Editor Modal */}
       {viewingDbFile && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden relative">
             
             {/* Modal Header */}
-            <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2 font-mono">
-                <Database className="h-5 w-5 text-amber-500" />
-                <span>{viewingDbFile.path.split('/').pop()}</span>
-                <span className="text-xs font-normal text-neutral-500 dark:text-neutral-400">({t.databaseViewer})</span>
-              </h3>
+            <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between bg-neutral-50 dark:bg-neutral-950/40">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2 font-mono">
+                  <Database className="h-5 w-5 text-amber-500" />
+                  <span>{viewingDbFile.path.split('/').pop()}</span>
+                </h3>
+                
+                {/* Mode Tabs */}
+                <div className="flex items-center bg-neutral-200 dark:bg-neutral-800 p-0.5 rounded-lg text-xs font-medium">
+                  <button
+                    onClick={() => setDbMode('table')}
+                    className={`px-3 py-1 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
+                      dbMode === 'table'
+                        ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white shadow-sm font-bold'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Database className="h-3.5 w-3.5" />
+                    <span>{lang === 'fa' ? 'جدول‌ها' : 'Tables'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDbMode('sql');
+                      if (!customSql && selectedDbTable) {
+                        setCustomSql(`SELECT * FROM "${selectedDbTable}" LIMIT 50;`);
+                      }
+                    }}
+                    className={`px-3 py-1 rounded-md transition flex items-center gap-1.5 cursor-pointer ${
+                      dbMode === 'sql'
+                        ? 'bg-white dark:bg-neutral-900 text-amber-500 shadow-sm font-bold'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Terminal className="h-3.5 w-3.5" />
+                    <span>{lang === 'fa' ? 'کنسول SQL' : 'SQL Console'}</span>
+                  </button>
+                </div>
+              </div>
+
               <button
                 onClick={() => {
                   setViewingDbFile(null);
@@ -968,8 +1211,10 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                   setSelectedDbTable('');
                   setDbTableData(null);
                   setDbError(null);
+                  setEditingDbRow(null);
+                  setSqlResult(null);
                 }}
-                className="p-1 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-500 dark:text-neutral-400 transition cursor-pointer"
+                className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-500 dark:text-neutral-400 transition cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -978,120 +1223,424 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
             {/* Modal Body */}
             <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
               
-              {/* Tables Sidebar */}
-              <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-neutral-950/50 flex flex-col space-y-2 shrink-0">
-                <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-                  {t.tables} ({dbTables.length})
-                </span>
-                <div className="overflow-y-auto max-h-48 md:max-h-none flex-1 space-y-1 pr-1">
-                  {dbTables.map((tableName) => (
+              {/* Tables Sidebar (only in Table mode) */}
+              {dbMode === 'table' && (
+                <div className="w-full md:w-60 border-b md:border-b-0 md:border-r border-neutral-200 dark:border-neutral-800 p-4 bg-neutral-50 dark:bg-neutral-950/50 flex flex-col space-y-2 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                      {t.tables} ({dbTables.length})
+                    </span>
                     <button
-                      key={tableName}
-                      onClick={() => setSelectedDbTable(tableName)}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
-                        selectedDbTable === tableName
-                          ? 'bg-amber-500 text-white shadow-md'
-                          : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800'
-                      }`}
+                      onClick={refetchDbTableData}
+                      title={lang === 'fa' ? 'بروزرسانی' : 'Refresh'}
+                      className="p-1 hover:bg-neutral-200 dark:hover:bg-neutral-800 rounded-lg text-neutral-500 transition"
                     >
-                      <Database className="h-3.5 w-3.5" />
-                      <span className="truncate">{tableName}</span>
+                      <RefreshCw className="h-3.5 w-3.5" />
                     </button>
-                  ))}
-                  {dbTables.length === 0 && !dbLoading && (
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 italic">
-                      {t.noTables}
-                    </p>
-                  )}
+                  </div>
+                  <div className="overflow-y-auto max-h-48 md:max-h-none flex-1 space-y-1 pr-1">
+                    {dbTables.map((tableName) => (
+                      <button
+                        key={tableName}
+                        onClick={() => setSelectedDbTable(tableName)}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
+                          selectedDbTable === tableName
+                            ? 'bg-amber-500 text-white shadow-md'
+                            : 'text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800'
+                        }`}
+                      >
+                        <Database className="h-3.5 w-3.5" />
+                        <span className="truncate">{tableName}</span>
+                      </button>
+                    ))}
+                    {dbTables.length === 0 && !dbLoading && (
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 italic">
+                        {t.noTables}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Data Table Area */}
+              {/* Data Table or SQL Console Area */}
               <div className="flex-1 overflow-hidden flex flex-col p-4 bg-white dark:bg-neutral-900">
-                {dbLoading && (
-                  <div className="flex-1 flex flex-col items-center justify-center space-y-2 text-neutral-500">
-                    <RefreshCw className="h-6 w-6 animate-spin text-amber-500" />
-                    <span className="text-xs font-medium">{t.loadingDb}</span>
-                  </div>
-                )}
+                {dbMode === 'table' ? (
+                  <>
+                    {dbLoading && (
+                      <div className="flex-1 flex flex-col items-center justify-center space-y-2 text-neutral-500">
+                        <RefreshCw className="h-6 w-6 animate-spin text-amber-500" />
+                        <span className="text-xs font-medium">{t.loadingDb}</span>
+                      </div>
+                    )}
 
-                {dbError && (
-                  <div className="flex-1 flex items-center justify-center p-4">
-                    <p className="text-xs font-semibold text-red-500 bg-red-500/10 px-4 py-3 rounded-xl border border-red-500/20">
-                      {dbError}
-                    </p>
-                  </div>
-                )}
+                    {dbError && (
+                      <div className="flex-1 flex items-center justify-center p-4">
+                        <p className="text-xs font-semibold text-red-500 bg-red-500/10 px-4 py-3 rounded-xl border border-red-500/20">
+                          {dbError}
+                        </p>
+                      </div>
+                    )}
 
-                {!dbLoading && !dbError && selectedDbTable && dbTableData && (
-                  <div className="flex-1 overflow-hidden flex flex-col space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-neutral-800 dark:text-neutral-200 bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-lg font-mono">
-                        {selectedDbTable}
-                      </span>
-                      <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                        {t.rowsCount.replace('{count}', dbTableData.rows.length.toString())}
-                      </span>
-                    </div>
+                    {!dbLoading && !dbError && selectedDbTable && dbTableData && (
+                      <div className="flex-1 overflow-hidden flex flex-col space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-neutral-800 dark:text-neutral-200 bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-lg font-mono">
+                              {selectedDbTable}
+                            </span>
+                            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                              {t.rowsCount.replace('{count}', dbTableData.rows.length.toString())}
+                            </span>
+                          </div>
 
-                    <div className="flex-1 overflow-auto border border-neutral-200 dark:border-neutral-800 rounded-xl bg-neutral-50 dark:bg-neutral-950/20">
-                      <table className="w-full text-left border-collapse min-w-max">
-                        <thead>
-                          <tr className="bg-neutral-100 dark:bg-neutral-800/80 border-b border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 font-mono text-[11px] font-bold">
-                            {dbTableData.columns.map((col) => (
-                              <th key={col.name} className="px-4 py-2.5 font-bold">
-                                <div className="flex flex-col">
-                                  <span>{col.name}</span>
-                                  <span className="text-[9px] font-normal text-neutral-400 dark:text-neutral-500 uppercase">{col.type}</span>
-                                </div>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 font-mono text-[11px] text-neutral-800 dark:text-neutral-200">
-                          {dbTableData.rows.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-neutral-100/50 dark:hover:bg-white/5 transition">
-                              {dbTableData.columns.map((col) => {
-                                const val = row[col.name];
-                                return (
-                                  <td key={col.name} className="px-4 py-2 max-w-[250px]">
-                                    <div className="overflow-x-auto whitespace-nowrap scrollbar-thin py-0.5" title={val !== null ? String(val) : 'NULL'}>
-                                      {val === null ? (
-                                        <span className="text-neutral-400 dark:text-neutral-600 italic">NULL</span>
-                                      ) : typeof val === 'object' ? (
-                                        JSON.stringify(val)
-                                      ) : (
-                                        String(val)
-                                      )}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                const emptyRow: Record<string, any> = {};
+                                dbTableData.columns.forEach(c => { emptyRow[c.name] = ''; });
+                                setEditingDbRow({ isNew: true, rowData: emptyRow });
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              <span>{lang === 'fa' ? 'افزودن ردیف' : 'Add Row'}</span>
+                            </button>
+                            <button
+                              onClick={refetchDbTableData}
+                              className="p-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition"
+                              title={lang === 'fa' ? 'بازخوانی' : 'Refresh'}
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-auto border border-neutral-200 dark:border-neutral-800 rounded-xl bg-neutral-50 dark:bg-neutral-950/20">
+                          <table className="w-full text-left border-collapse min-w-max">
+                            <thead>
+                              <tr className="bg-neutral-100 dark:bg-neutral-800/80 border-b border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 font-mono text-[11px] font-bold">
+                                <th className="px-3 py-2.5 w-16 text-center font-bold">
+                                  {lang === 'fa' ? 'عملیات' : 'Actions'}
+                                </th>
+                                {dbTableData.columns.map((col) => (
+                                  <th key={col.name} className="px-4 py-2.5 font-bold">
+                                    <div className="flex flex-col">
+                                      <span>{col.name}</span>
+                                      <span className="text-[9px] font-normal text-neutral-400 dark:text-neutral-500 uppercase">{col.type}</span>
+                                    </div>
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 font-mono text-[11px] text-neutral-800 dark:text-neutral-200">
+                              {dbTableData.rows.map((row, idx) => (
+                                <tr key={idx} className="hover:bg-neutral-100/50 dark:hover:bg-white/5 transition">
+                                  {/* Action Buttons */}
+                                  <td className="px-3 py-2 text-center whitespace-nowrap">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        onClick={() => setEditingDbRow({ isNew: false, rowData: { ...row }, originalRow: { ...row } })}
+                                        className="p-1 text-blue-500 hover:bg-blue-500/10 rounded-md transition cursor-pointer"
+                                        title={lang === 'fa' ? 'ویرایش' : 'Edit'}
+                                      >
+                                        <Edit3 className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setRowActionError(null);
+                                          setDeletingDbRow(row);
+                                        }}
+                                        className="p-1 text-red-500 hover:bg-red-500/10 rounded-md transition cursor-pointer"
+                                        title={lang === 'fa' ? 'حذف' : 'Delete'}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
                                     </div>
                                   </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                          {dbTableData.rows.length === 0 && (
-                            <tr>
-                              <td colSpan={dbTableData.columns.length} className="px-4 py-8 text-center text-xs text-neutral-500 dark:text-neutral-400">
-                                {lang === 'fa' ? 'هیچ ردیفی یافت نشد' : 'No rows found'}
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+                                  {dbTableData.columns.map((col) => {
+                                    const val = row[col.name];
+                                    return (
+                                      <td key={col.name} className="px-4 py-2 max-w-[250px]">
+                                        <div className="overflow-x-auto whitespace-nowrap scrollbar-thin py-0.5" title={val !== null ? String(val) : 'NULL'}>
+                                          {val === null ? (
+                                            <span className="text-neutral-400 dark:text-neutral-600 italic">NULL</span>
+                                          ) : typeof val === 'object' ? (
+                                            JSON.stringify(val)
+                                          ) : (
+                                            String(val)
+                                          )}
+                                        </div>
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                              {dbTableData.rows.length === 0 && (
+                                <tr>
+                                  <td colSpan={dbTableData.columns.length + 1} className="px-4 py-8 text-center text-xs text-neutral-500 dark:text-neutral-400">
+                                    {lang === 'fa' ? 'هیچ ردیفی یافت نشد' : 'No rows found'}
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
-                {!selectedDbTable && !dbLoading && !dbError && (
-                  <div className="flex-1 flex items-center justify-center">
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 italic">
-                      {lang === 'fa' ? 'لطفا یک جدول انتخاب کنید' : 'Please select a table'}
-                    </p>
+                    {!selectedDbTable && !dbLoading && !dbError && (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 italic">
+                          {lang === 'fa' ? 'لطفا یک جدول انتخاب کنید' : 'Please select a table'}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* SQL Console View */
+                  <div className="flex-1 overflow-hidden flex flex-col space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5 font-mono">
+                        <Terminal className="h-4 w-4 text-amber-500" />
+                        <span>{lang === 'fa' ? 'ویرایش و اجرای دستورات SQL' : 'Execute Custom SQL Query'}</span>
+                      </span>
+
+                      {/* Snippets */}
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        {selectedDbTable && (
+                          <>
+                            <button
+                              onClick={() => setCustomSql(`SELECT * FROM "${selectedDbTable}";`)}
+                              className="px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 hover:bg-amber-500 hover:text-white transition text-neutral-600 dark:text-neutral-300 font-mono cursor-pointer"
+                            >
+                              SELECT
+                            </button>
+                            <button
+                              onClick={() => setCustomSql(`UPDATE "${selectedDbTable}" SET column_name = 'value' WHERE id = 1;`)}
+                              className="px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 hover:bg-amber-500 hover:text-white transition text-neutral-600 dark:text-neutral-300 font-mono cursor-pointer"
+                            >
+                              UPDATE
+                            </button>
+                            <button
+                              onClick={() => setCustomSql(`DELETE FROM "${selectedDbTable}" WHERE id = 1;`)}
+                              className="px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 hover:bg-amber-500 hover:text-white transition text-neutral-600 dark:text-neutral-300 font-mono cursor-pointer"
+                            >
+                              DELETE
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col space-y-2">
+                      <textarea
+                        value={customSql}
+                        onChange={(e) => setCustomSql(e.target.value)}
+                        placeholder={lang === 'fa' ? 'دستور SQL خود را وارد کنید... (مثلاً UPDATE, INSERT, DELETE, SELECT)' : 'Enter your SQL query here... (e.g. UPDATE, INSERT, DELETE, SELECT)'}
+                        rows={4}
+                        className="w-full p-3 font-mono text-xs bg-neutral-900 text-amber-400 rounded-xl border border-neutral-700 focus:outline-none focus:border-amber-500 resize-none"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => handleExecuteCustomSql()}
+                          disabled={isSqlExecuting || !customSql.trim()}
+                          className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md"
+                        >
+                          {isSqlExecuting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4 fill-white" />}
+                          <span>{lang === 'fa' ? 'اجرای کوئری' : 'Execute Query'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Query Result Output */}
+                    <div className="flex-1 overflow-auto border border-neutral-200 dark:border-neutral-800 rounded-xl bg-neutral-50 dark:bg-neutral-950 p-3 flex flex-col">
+                      {sqlResult === null && !isSqlExecuting && (
+                        <p className="text-xs text-neutral-400 italic m-auto">
+                          {lang === 'fa' ? 'نتایج کوئری در اینجا نمایش داده می‌شوند.' : 'Query results will be displayed here.'}
+                        </p>
+                      )}
+
+                      {sqlResult && (
+                        <div className="flex flex-col space-y-2">
+                          {sqlResult.success ? (
+                            <div className="p-2.5 bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 rounded-xl text-xs font-mono flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4 shrink-0" />
+                              <span>
+                                {lang === 'fa'
+                                  ? `کوئری با موفقیت اجرا شد. (تعداد تغییرات / ردیف‌ها: ${sqlResult.changes ?? 0})`
+                                  : `Query executed successfully. (Affected rows/changes: ${sqlResult.changes ?? 0})`}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-xs font-mono flex items-start gap-2">
+                              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                              <span>{sqlResult.error}</span>
+                            </div>
+                          )}
+
+                          {sqlResult.rows && sqlResult.rows.length > 0 && sqlResult.columns && (
+                            <div className="overflow-x-auto border border-neutral-200 dark:border-neutral-800 rounded-lg">
+                              <table className="w-full text-left border-collapse font-mono text-[11px]">
+                                <thead>
+                                  <tr className="bg-neutral-100 dark:bg-neutral-800 border-b border-neutral-200 dark:border-neutral-800">
+                                    {sqlResult.columns.map(col => (
+                                      <th key={col.name} className="px-3 py-2 font-bold text-neutral-700 dark:text-neutral-300">
+                                        {col.name}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                                  {sqlResult.rows.map((r, idx) => (
+                                    <tr key={idx} className="hover:bg-neutral-100/50 dark:hover:bg-white/5">
+                                      {sqlResult.columns!.map(col => (
+                                        <td key={col.name} className="px-3 py-1.5 max-w-[200px] truncate">
+                                          {r[col.name] !== null ? String(r[col.name]) : 'NULL'}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
 
             </div>
+
+            {/* Row Edit / Insert Overlay Modal */}
+            {editingDbRow && dbTableData && (
+              <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-5 w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                    <h4 className="text-sm font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2 font-mono">
+                      <Edit3 className="h-4 w-4 text-amber-500" />
+                      <span>
+                        {editingDbRow.isNew
+                          ? (lang === 'fa' ? 'افزودن ردیف جدید' : 'Add New Row')
+                          : (lang === 'fa' ? 'ویرایش ردیف' : 'Edit Row')}
+                      </span>
+                    </h4>
+                    <button
+                      onClick={() => {
+                        setEditingDbRow(null);
+                        setRowActionError(null);
+                      }}
+                      className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg text-neutral-500"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {rowActionError && (
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-xs font-mono flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>{rowActionError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                    {dbTableData.columns.map(col => (
+                      <div key={col.name} className="flex flex-col space-y-1">
+                        <label className="text-xs font-mono font-bold text-neutral-700 dark:text-neutral-300 flex items-center justify-between">
+                          <span>{col.name}</span>
+                          <span className="text-[10px] text-neutral-400 font-normal uppercase">{col.type}</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editingDbRow.rowData[col.name] ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditingDbRow(prev => prev ? {
+                              ...prev,
+                              rowData: { ...prev.rowData, [col.name]: val }
+                            } : null);
+                          }}
+                          className="w-full px-3 py-2 text-xs font-mono bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:border-amber-500 text-neutral-800 dark:text-neutral-200"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-end gap-2 border-t border-neutral-200 dark:border-neutral-800 pt-3">
+                    <button
+                      onClick={() => {
+                        setEditingDbRow(null);
+                        setRowActionError(null);
+                      }}
+                      className="px-4 py-2 rounded-xl text-xs font-medium border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                    >
+                      {t.cancel}
+                    </button>
+                    <button
+                      onClick={handleSaveDbRow}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white transition flex items-center gap-1.5 cursor-pointer shadow-md"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      <span>{t.save}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Row Delete Confirmation Overlay Modal */}
+            {deletingDbRow && dbTableData && (
+              <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl p-5 w-full max-w-md flex flex-col shadow-2xl space-y-4">
+                  <div className="flex items-center gap-3 text-red-500">
+                    <div className="p-2.5 bg-red-500/10 rounded-full">
+                      <Trash2 className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-neutral-800 dark:text-neutral-100">
+                        {lang === 'fa' ? 'تایید حذف ردیف' : 'Confirm Row Deletion'}
+                      </h4>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                        {lang === 'fa' ? 'آیا از حذف این ردیف از جدول اطمینان دارید؟ این عمل غیرقابل بازگشت است.' : 'Are you sure you want to delete this row? This action cannot be undone.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {rowActionError && (
+                    <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-xs font-mono flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>{rowActionError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                    <button
+                      onClick={() => {
+                        setDeletingDbRow(null);
+                        setRowActionError(null);
+                      }}
+                      disabled={isDeletingLoading}
+                      className="px-4 py-2 rounded-xl text-xs font-medium border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+                    >
+                      {t.cancel}
+                    </button>
+                    <button
+                      onClick={confirmDeleteDbRow}
+                      disabled={isDeletingLoading}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white transition flex items-center gap-1.5 cursor-pointer shadow-md"
+                    >
+                      {isDeletingLoading ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                      <span>{lang === 'fa' ? 'حذف ردیف' : 'Delete Row'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
           </div>
         </div>

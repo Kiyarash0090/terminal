@@ -824,6 +824,56 @@ print(json.dumps({"columns": columns, "rows": rows}))`;
   }
 });
 
+app.post('/api/sqlite/execute', async (req: Request, res: Response) => {
+  try {
+    const { dbPath, sql, params } = req.body;
+    if (!dbPath || !fs.existsSync(dbPath)) {
+      return res.status(404).json({ error: 'Database file not found' });
+    }
+    if (!sql || typeof sql !== 'string') {
+      return res.status(400).json({ error: 'SQL query string is required' });
+    }
+
+    const pyScript = `import sqlite3, json, sys
+
+db_path = sys.argv[1]
+sql_query = sys.argv[2]
+raw_params = sys.argv[3] if len(sys.argv) > 3 else "[]"
+
+try:
+    params = json.loads(raw_params)
+except:
+    params = []
+
+try:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(sql_query, params)
+    conn.commit()
+    
+    if cursor.description:
+        cols = [{"name": col[0]} for col in cursor.description]
+        rows = [dict(r) for r in cursor.fetchall()]
+        res = {"success": True, "type": "select", "columns": cols, "rows": rows, "changes": len(rows)}
+    else:
+        res = {"success": True, "type": "exec", "changes": cursor.rowcount if cursor.rowcount >= 0 else conn.total_changes}
+    conn.close()
+    print(json.dumps(res))
+except Exception as e:
+    print(json.dumps({"success": False, "error": str(e)}))`;
+
+    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath, sql, JSON.stringify(params || [])]);
+    const result = JSON.parse(stdout.trim());
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/files/write', async (req: Request, res: Response) => {
   try {
     const { filePath, content } = req.body;
@@ -1457,6 +1507,39 @@ app.post('/api/processes/kill', (req: Request, res: Response) => {
   } else {
     res.status(400).json({ error: 'Process ID or PID required' });
   }
+});
+
+app.post('/api/processes/remove', (req: Request, res: Response) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'Process ID required' });
+  }
+
+  if (backgroundTasks.has(id)) {
+    const item = backgroundTasks.get(id);
+    if (item) {
+      if (item.task.status === 'running') {
+        killTaskProcess(item.task, item);
+      }
+      backgroundTasks.delete(id);
+      activeProcessesMap.delete(id);
+      return res.json({ success: true, message: 'Task removed from list' });
+    }
+  }
+
+  res.status(404).json({ error: 'Task not found' });
+});
+
+app.post('/api/processes/clear-stopped', (req: Request, res: Response) => {
+  let count = 0;
+  for (const [id, item] of backgroundTasks.entries()) {
+    if (item.task.status !== 'running') {
+      backgroundTasks.delete(id);
+      activeProcessesMap.delete(id);
+      count++;
+    }
+  }
+  res.json({ success: true, removedCount: count });
 });
 
 app.post('/api/processes/restart', async (req: Request, res: Response) => {

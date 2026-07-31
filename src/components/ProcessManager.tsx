@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown } from 'lucide-react';
+import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2 } from 'lucide-react';
 import { BackgroundTask, SystemProcess, Language } from '../types';
 import { translations } from '../locales/translations';
 import { GithubUploadDeployModal } from './GithubUploadDeployModal';
@@ -158,6 +158,47 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
     }
   };
 
+  const handleRemoveTask = async (id: string) => {
+    try {
+      const res = await fetch('/api/processes/remove', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) {
+        setTasks(prev => prev.filter(t => t.id !== id));
+        if (activeTaskLogs?.id === id) {
+          setActiveTaskLogs(null);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'خطا در حذف اسکریپت');
+      }
+    } catch {
+      alert('خطا در ارتباط با سرور');
+    }
+  };
+
+  const handleClearStoppedTasks = async () => {
+    try {
+      const res = await fetch('/api/processes/clear-stopped', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        }
+      });
+      if (res.ok) {
+        fetchProcesses();
+      }
+    } catch {
+      alert('خطا در پاکسازی اسکریپت‌های متوقف شده');
+    }
+  };
+
   const handleViewLogs = async (task: BackgroundTask) => {
     try {
       const res = await fetch(`/api/processes/${task.id}/logs`, {
@@ -256,9 +297,22 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
               {tasks.length}
             </span>
           </div>
-          <span className="text-xs text-neutral-500 hidden sm:inline">
-            {lang === 'fa' ? 'اجرا به صورت پس‌زمینه (Screen / Tmux)' : 'Persistent Background Tasks'}
-          </span>
+
+          <div className="flex items-center gap-3">
+            {tasks.some(t => t.status !== 'running') && (
+              <button
+                onClick={handleClearStoppedTasks}
+                className="px-2.5 py-1 rounded-lg text-xs font-medium border border-rose-500/20 text-rose-500 hover:bg-rose-500/10 transition flex items-center gap-1 cursor-pointer"
+                title={lang === 'fa' ? 'حذف تمام اسکریپت‌های متوقف شده' : 'Clear stopped tasks'}
+              >
+                <Trash2 className="h-3 w-3" />
+                <span>{lang === 'fa' ? 'پاکسازی متوقف‌شده‌ها' : 'Clear Stopped'}</span>
+              </button>
+            )}
+            <span className="text-xs text-neutral-500 hidden sm:inline">
+              {lang === 'fa' ? 'اجرا به صورت پس‌زمینه (Screen / Tmux)' : 'Persistent Background Tasks'}
+            </span>
+          </div>
         </div>
 
         {tasks.length === 0 ? (
@@ -337,6 +391,13 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
                       <span>{lang === 'fa' ? 'توقف' : 'Stop'}</span>
                     </button>
                   )}
+                  <button
+                    onClick={() => handleRemoveTask(task.id)}
+                    className="p-1.5 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-600 hover:text-white transition cursor-pointer"
+                    title={lang === 'fa' ? 'حذف از جدول' : 'Remove from table'}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
             ))}
