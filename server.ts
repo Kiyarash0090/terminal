@@ -813,7 +813,7 @@ conn.close()
 
 print(json.dumps({"columns": columns, "rows": rows}))`;
 
-    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath, table, String(limit)]);
+    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath, table, String(limit)], { maxBuffer: 1024 * 1024 * 500 });
     const result = JSON.parse(stdout.trim());
     if (result.error) {
       return res.status(400).json({ error: result.error });
@@ -863,7 +863,7 @@ try:
 except Exception as e:
     print(json.dumps({"success": False, "error": str(e)}))`;
 
-    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath, sql, JSON.stringify(params || [])]);
+    const { stdout } = await execFileAsync('python3', ['-c', pyScript, dbPath, sql, JSON.stringify(params || [])], { maxBuffer: 1024 * 1024 * 500 });
     const result = JSON.parse(stdout.trim());
     if (!result.success) {
       return res.status(400).json({ error: result.error });
