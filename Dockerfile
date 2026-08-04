@@ -24,11 +24,8 @@ RUN ARCH=$(dpkg --print-architecture) \
         armhf) XRAY_ARCH="arm32-v7a" ;; \
         *)     XRAY_ARCH="64" ;; \
     esac \
-    && XRAY_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest \
-        | grep '"tag_name"' | cut -d'"' -f4) \
-    && if [ -z "$XRAY_VERSION" ]; then XRAY_VERSION="v24.11.30"; fi \
-    && curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-${XRAY_ARCH}.zip" \
-        -o /tmp/xray.zip \
+    && (curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-${XRAY_ARCH}.zip" -o /tmp/xray.zip \
+        || curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-${XRAY_ARCH}.zip" -o /tmp/xray.zip) \
     && unzip -q /tmp/xray.zip -d /tmp/xray \
     && mv /tmp/xray/xray /usr/local/bin/xray \
     && chmod +x /usr/local/bin/xray \
