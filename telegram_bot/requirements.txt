@@ -3,3 +3,7 @@ aiohttp
 psutil
 requests
 aiofiles
+PySocks
+socksio
+httpx[socks]
+aiohttp-socks

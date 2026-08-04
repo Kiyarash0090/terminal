@@ -41,12 +41,12 @@ COPY . .
 
 # Install Python requirements (root requirements.txt & telegram bot requirements)
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt || pip3 install --no-cache-dir -r requirements.txt
-RUN if [ -f "telegram bot/requirements.txt" ]; then pip3 install --no-cache-dir --break-system-packages -r "telegram bot/requirements.txt" || pip3 install --no-cache-dir -r "telegram bot/requirements.txt"; fi
+RUN if [ -f "telegram_bot/requirements.txt" ]; then pip3 install --no-cache-dir --break-system-packages -r "telegram_bot/requirements.txt" || pip3 install --no-cache-dir -r "telegram_bot/requirements.txt"; fi
 
 # Copy proxychains configuration
-RUN if [ -f "telegram bot/proxychains.conf" ]; then \
-      cp "telegram bot/proxychains.conf" /etc/proxychains4.conf && \
-      cp "telegram bot/proxychains.conf" /etc/proxychains.conf; \
+RUN if [ -f "telegram_bot/proxychains.conf" ]; then \
+      cp "telegram_bot/proxychains.conf" /etc/proxychains4.conf && \
+      cp "telegram_bot/proxychains.conf" /etc/proxychains.conf; \
     elif [ -f "proxychains.conf" ]; then \
       cp proxychains.conf /etc/proxychains4.conf && \
       cp proxychains.conf /etc/proxychains.conf; \
