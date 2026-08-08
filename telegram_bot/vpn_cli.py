@@ -65,9 +65,17 @@ async def main():
             print(json.dumps({"error": "Index required"}))
             return
         try:
-            idx = int(sys.argv[2])
-            ok, msg = vpn.delete_config(idx)
-            print(json.dumps({"success": ok, "message": msg}))
+            raw_arg = sys.argv[2]
+            if "," in raw_arg or "[" in raw_arg:
+                # bulk delete
+                clean_str = raw_arg.replace("[", "").replace("]", "")
+                indices = [int(i.strip()) for i in clean_str.split(",") if i.strip().isdigit()]
+                count, msg = vpn.delete_configs_bulk(indices)
+                print(json.dumps({"success": count > 0, "deleted": count, "message": msg}))
+            else:
+                idx = int(raw_arg)
+                ok, msg = vpn.delete_config(idx)
+                print(json.dumps({"success": ok, "message": msg}))
         except Exception as e:
             print(json.dumps({"error": str(e)}))
 
@@ -93,8 +101,22 @@ async def main():
     elif cmd == "test":
         if len(sys.argv) > 2 and sys.argv[2] != "all":
             idx = int(sys.argv[2])
-            res = await vpn.test_config(idx)
-            print(json.dumps({"result": res}))
+            mode = sys.argv[3] if len(sys.argv) > 3 else "full"
+            if mode == "ping":
+                ok, msg, ping_ms = await vpn.test_ping(idx)
+                print(json.dumps({"result": [ok, msg], "ping": ping_ms}))
+            elif mode == "speed":
+                ping_arg = None
+                if len(sys.argv) > 4 and sys.argv[4] not in ("null", "None", ""):
+                    try:
+                        ping_arg = float(sys.argv[4])
+                    except ValueError:
+                        pass
+                res = await vpn.test_speed(idx, ping_arg)
+                print(json.dumps({"result": res}))
+            else:
+                res = await vpn.test_config(idx)
+                print(json.dumps({"result": res}))
         else:
             results = await vpn.test_all_configs()
             # results format: [(index, name, ok, msg), ...]

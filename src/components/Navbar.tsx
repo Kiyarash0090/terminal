@@ -27,16 +27,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   const t = translations[lang];
 
   return (
-    <header className="sticky top-0 z-30 h-16 border-b border-neutral-200 dark:border-white/10 bg-white/90 dark:bg-[#0A0A0B]/80 backdrop-blur-md px-4 md:px-6 flex items-center justify-between transition-colors">
-      <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl overflow-hidden border border-emerald-500/30 shadow-lg shadow-emerald-500/10 bg-neutral-900 shrink-0">
+    <header className="sticky top-0 z-30 h-12 sm:h-14 md:h-16 border-b border-neutral-200 dark:border-white/10 bg-white/90 dark:bg-[#0A0A0B]/80 backdrop-blur-md px-2.5 sm:px-4 md:px-6 flex items-center justify-between transition-colors">
+      <div className="flex items-center gap-2 sm:gap-3">
+        <div className="h-7 w-7 sm:h-9 sm:w-9 md:h-10 md:w-10 rounded-lg sm:rounded-xl overflow-hidden border border-emerald-500/30 shadow-lg shadow-emerald-500/10 bg-neutral-900 shrink-0">
           <img src={avatarImg} alt="Terminal Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
         </div>
         <div>
-          <h1 className="font-bold text-base leading-none tracking-tight text-neutral-900 dark:text-white">
+          <h1 className="font-bold text-xs sm:text-sm md:text-base leading-tight tracking-tight text-neutral-900 dark:text-white">
             {t.appTitle}
           </h1>
-          <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 hidden sm:block">
+          <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 hidden sm:block">
             {t.appSubTitle}
           </p>
         </div>
@@ -47,29 +47,29 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         {/* Language Toggle */}
         <button
           onClick={onToggleLang}
-          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition flex items-center gap-1.5 text-neutral-700 dark:text-neutral-200 cursor-pointer"
+          className="px-2 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition flex items-center gap-1 text-neutral-700 dark:text-neutral-200 cursor-pointer"
           title={t.langToggle}
         >
-          <Languages className="h-3.5 w-3.5" />
+          <Languages className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
           <span>{t.langToggle}</span>
         </button>
 
         {/* Theme Toggle */}
         <button
           onClick={onToggleTheme}
-          className="p-2 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition text-neutral-700 dark:text-neutral-200 cursor-pointer"
+          className="p-1.5 sm:p-2 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition text-neutral-700 dark:text-neutral-200 cursor-pointer"
           title={t.themeToggle}
         >
-          {theme === 'dark' ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-slate-700" />}
+          {theme === 'dark' ? <Sun className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-400" /> : <Moon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-700" />}
         </button>
 
         {/* User / Security */}
         {user && (
-          <div className="flex items-center gap-2 pl-2 border-l border-neutral-200 dark:border-neutral-800 mr-1">
+          <div className="flex items-center gap-1 sm:gap-2 pl-1.5 sm:pl-2 border-l border-neutral-200 dark:border-neutral-800 mr-1">
             <button
               onClick={onOpenSecurity}
               className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 transition cursor-pointer"
@@ -81,10 +81,10 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <button
               onClick={onLogout}
-              className="p-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 border border-red-200/50 dark:border-red-900/30 transition cursor-pointer"
+              className="p-1.5 sm:p-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 border border-red-200/50 dark:border-red-900/30 transition cursor-pointer"
               title={t.logout}
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </button>
           </div>
         )}

@@ -185,6 +185,29 @@ class VPNManager:
         self._save_store()
         return True, f"✅ کانفیگ «{name}» حذف شد."
 
+    def delete_configs_bulk(self, indices: List[int]) -> Tuple[int, str]:
+        """حذف گروهی کانفیگ‌ها با لیست نمایه‌ها"""
+        configs = self._store["configs"]
+        sorted_indices = sorted(set(indices), reverse=True)
+        deleted_count = 0
+        ai = self._store.get("active_index")
+
+        for idx in sorted_indices:
+            if 0 <= idx < len(configs):
+                configs.pop(idx)
+                deleted_count += 1
+                if ai == idx:
+                    ai = None
+                elif ai is not None and ai > idx:
+                    ai -= 1
+
+        self._store["active_index"] = ai
+        if ai is None:
+            self._store["enabled"] = False
+
+        self._save_store()
+        return deleted_count, f"✅ تعداد {deleted_count} کانفیگ با موفقیت حذف شد."
+
     def list_configs(self) -> List[Dict]:
         return self._store["configs"]
 
@@ -293,10 +316,10 @@ class VPNManager:
                 p = await asyncio.create_subprocess_exec(
                     "curl", "-s", "-o", "/dev/null", "-w", "%{time_starttransfer}",
                     "--socks5", f"127.0.0.1:{proxy_port}",
-                    "--connect-timeout", "5", "--max-time", "6", target,
+                    "--connect-timeout", "3", "--max-time", "4", target,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
-                out, _ = await asyncio.wait_for(p.communicate(), timeout=8)
+                out, _ = await asyncio.wait_for(p.communicate(), timeout=5)
                 val = out.decode().strip()
                 if val:
                     ms = round(float(val) * 1000, 1)
@@ -312,11 +335,11 @@ class VPNManager:
             p = await asyncio.create_subprocess_exec(
                 "curl", "-s", "-o", "/dev/null", "-w", "%{speed_download}",
                 "--socks5", f"127.0.0.1:{proxy_port}",
-                "--connect-timeout", "5", "--max-time", "8",
+                "--connect-timeout", "4", "--max-time", "6",
                 "https://speed.cloudflare.com/__down?bytes=1000000",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            out, _ = await asyncio.wait_for(p.communicate(), timeout=10)
+            out, _ = await asyncio.wait_for(p.communicate(), timeout=8)
             val = out.decode().strip()
             if val:
                 speed = float(val)
@@ -335,14 +358,14 @@ class VPNManager:
             p = await asyncio.create_subprocess_exec(
                 "curl", "-s", "-o", "/dev/null", "-w", "%{speed_upload}",
                 "--socks5", f"127.0.0.1:{proxy_port}",
-                "--connect-timeout", "5", "--max-time", "8",
+                "--connect-timeout", "4", "--max-time", "6",
                 "-X", "POST",
                 "--data-binary", f"@{tmp}",
                 "-H", "Content-Type: application/octet-stream",
                 "https://speed.cloudflare.com/__up",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            out, _ = await asyncio.wait_for(p.communicate(), timeout=10)
+            out, _ = await asyncio.wait_for(p.communicate(), timeout=8)
             val = out.decode().strip()
             if val:
                 speed = float(val)
@@ -368,8 +391,46 @@ class VPNManager:
         lines = [f"{icon} «{name}»", ping_str, dl_str, ul_str]
         return all_ok, "\n".join(lines)
 
+    async def test_ping(self, index: int) -> Tuple[bool, str, Optional[float]]:
+        """تست فقط پینگ یک کانفیگ"""
+        cfg = self.get_config(index)
+        if not cfg:
+            return False, "❌ کانفیگ پیدا نشد.", None
+
+        proc, port, err = await self._run_v2ray_for_test(index)
+        if err:
+            return False, err, None
+
+        try:
+            ping = await self._measure_ping(port)
+            if ping is not None:
+                return True, f"📶 پینگ: {ping} ms", ping
+            else:
+                return False, "📶 پینگ: ❌ timeout", None
+        finally:
+            await self._kill_test_proc(proc)
+
+    async def test_speed(self, index: int, ping_val: Optional[float] = None) -> Tuple[bool, str]:
+        """تست سرعت (دانلود + آپلود) یک کانفیگ"""
+        cfg = self.get_config(index)
+        if not cfg:
+            return False, "❌ کانفیگ پیدا نشد."
+
+        proc, port, err = await self._run_v2ray_for_test(index)
+        if err:
+            return False, err
+
+        try:
+            if ping_val is None:
+                ping_val = await self._measure_ping(port)
+            dl = await self._measure_download(port)
+            ul = await self._measure_upload(port)
+            return self._format_test_result(cfg["name"], ping_val, dl, ul)
+        finally:
+            await self._kill_test_proc(proc)
+
     async def test_config(self, index: int) -> Tuple[bool, str]:
-        """تست یک کانفیگ: پینگ + دانلود + آپلود از طریق Cloudflare"""
+        """تست کامل یک کانفیگ: پینگ + دانلود + آپلود"""
         cfg = self.get_config(index)
         if not cfg:
             return False, "❌ کانفیگ پیدا نشد."

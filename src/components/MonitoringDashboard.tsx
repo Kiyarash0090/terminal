@@ -76,43 +76,136 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
   return (
     <div className="space-y-6">
       {/* Top Header Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-neutral-200 dark:border-white/10">
-        <div>
-          <h2 className="text-xl font-bold text-neutral-900 dark:text-white flex items-center gap-2">
-            <Activity className="h-5 w-5 text-blue-500" />
-            <span>{t.monitoring}</span>
-          </h2>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            {metrics?.hostname} &bull; {metrics?.platform}
-          </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-neutral-200 dark:border-white/10">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-500">
+              <Activity className="h-4 w-4" />
+            </div>
+            <h2 className="text-base font-bold text-neutral-900 dark:text-white">
+              {t.monitoring}
+            </h2>
+          </div>
+          {metrics && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10 text-[11px] font-mono text-neutral-600 dark:text-neutral-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span>{metrics.hostname}</span>
+              <span className="opacity-40">&bull;</span>
+              <span>{metrics.platform}</span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-500 dark:text-neutral-400">{t.refreshInterval}:</span>
-          <select
-            value={refreshRate}
-            onChange={(e) => setRefreshRate(Number(e.target.value))}
-            className="px-2.5 py-1.5 rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] text-xs font-medium text-neutral-800 dark:text-neutral-200"
-          >
-            <option value={1000}>1 {t.sec}</option>
-            <option value={2000}>2 {t.sec}</option>
-            <option value={5000}>5 {t.sec}</option>
-          </select>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10 text-xs text-neutral-600 dark:text-neutral-400">
+            <span>{t.refreshInterval}:</span>
+            <select
+              value={refreshRate}
+              onChange={(e) => setRefreshRate(Number(e.target.value))}
+              className="bg-transparent font-medium text-neutral-900 dark:text-white focus:outline-none cursor-pointer py-0.5"
+            >
+              <option value={1000} className="bg-white dark:bg-[#121214]">1 {t.sec}</option>
+              <option value={2000} className="bg-white dark:bg-[#121214]">2 {t.sec}</option>
+              <option value={5000} className="bg-white dark:bg-[#121214]">5 {t.sec}</option>
+            </select>
+          </div>
 
           <button
             onClick={fetchMetrics}
-            className="p-1.5 rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 transition text-neutral-700 dark:text-neutral-200 cursor-pointer"
+            className="p-1.5 rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 transition text-neutral-700 dark:text-neutral-300 cursor-pointer"
             title="Refresh"
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Bento Grid layout for Metric Summary Cards */}
-      <div className="flex overflow-x-auto gap-4 pb-2 scrollbar-thin lg:grid lg:grid-cols-4">
+      {/* Metric Summary Cards - Mobile View (Compact Rows) */}
+      <div className="grid grid-cols-1 gap-2 sm:hidden">
+        {/* CPU */}
+        <div className="p-3 rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 shrink-0">
+              <Cpu className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 truncate">{t.cpuUsage}</div>
+              <div className="text-[10px] text-neutral-500 font-mono">{metrics?.cpuCores} {t.cores}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="w-16 bg-neutral-200 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+              <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${metrics?.cpuPercent || 0}%` }} />
+            </div>
+            <span className="text-sm font-extrabold font-mono text-neutral-900 dark:text-white w-10 text-left">
+              {metrics?.cpuPercent}%
+            </span>
+          </div>
+        </div>
+
+        {/* RAM */}
+        <div className="p-3 rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400 shrink-0">
+              <Server className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 truncate">{t.ramUsage}</div>
+              <div className="text-[10px] text-neutral-500 font-mono truncate">{metrics?.ramUsedMB} / {metrics?.ramTotalMB} MB</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="w-16 bg-neutral-200 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+              <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${metrics?.ramPercent || 0}%` }} />
+            </div>
+            <span className="text-sm font-extrabold font-mono text-neutral-900 dark:text-white w-10 text-left">
+              {metrics?.ramPercent}%
+            </span>
+          </div>
+        </div>
+
+        {/* Disk */}
+        <div className="p-3 rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
+              <HardDrive className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 truncate">{t.diskUsage}</div>
+              <div className="text-[10px] text-neutral-500 font-mono truncate">{metrics?.diskUsedGB} / {metrics?.diskTotalGB} GB</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="w-16 bg-neutral-200 dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+              <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${metrics?.diskPercent || 0}%` }} />
+            </div>
+            <span className="text-sm font-extrabold font-mono text-neutral-900 dark:text-white w-10 text-left">
+              {metrics?.diskPercent}%
+            </span>
+          </div>
+        </div>
+
+        {/* Uptime & Network */}
+        <div className="p-3 rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 shrink-0">
+              <Clock className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 truncate">{t.uptime}</div>
+              <div className="text-[10px] text-neutral-500 font-mono dir-ltr">↓ {metrics?.netRxKbps} KB/s &bull; ↑ {metrics?.netTxKbps} KB/s</div>
+            </div>
+          </div>
+          <span className="text-xs font-extrabold font-mono text-neutral-900 dark:text-white shrink-0">
+            {formatUptime(metrics?.uptimeSeconds || 0)}
+          </span>
+        </div>
+      </div>
+
+      {/* Metric Summary Cards - Desktop View (Classic Grid) */}
+      <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* CPU Card */}
-        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between min-w-[240px] lg:min-w-0 flex-1 shrink-0">
+        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400">
               {t.cpuUsage}
@@ -138,7 +231,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
         </div>
 
         {/* RAM Card */}
-        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between min-w-[240px] lg:min-w-0 flex-1 shrink-0">
+        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400">
               {t.ramUsage}
@@ -164,7 +257,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
         </div>
 
         {/* Disk Card */}
-        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between min-w-[240px] lg:min-w-0 flex-1 shrink-0">
+        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400">
               {t.diskUsage}
@@ -190,7 +283,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
         </div>
 
         {/* Network & Uptime Card */}
-        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between min-w-[240px] lg:min-w-0 flex-1 shrink-0">
+        <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400">
               {t.uptime}
@@ -212,14 +305,14 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
       </div>
 
       {/* Live Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* CPU Chart */}
-        <div className="p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl">
-          <h3 className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-4 flex items-center gap-2">
+        <div className="p-3.5 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-md sm:shadow-2xl">
+          <h3 className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-2.5 sm:mb-4 flex items-center gap-2">
             <Cpu className="h-4 w-4 text-blue-500" />
             <span>{t.cpuHistory} (%)</span>
           </h3>
-          <div className="h-64 w-full">
+          <div className="h-44 sm:h-64 w-full">
             {active && (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData}>
@@ -230,8 +323,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#888' }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#888' }} />
+                  <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#888' }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: '#888' }} />
                   <Tooltip contentStyle={{ backgroundColor: '#121214', borderColor: '#333', borderRadius: '12px' }} />
                   <Area type="monotone" dataKey="cpu" stroke="#2563eb" fillOpacity={1} fill="url(#cpuColor)" strokeWidth={2} />
                 </AreaChart>
@@ -241,12 +334,12 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
         </div>
 
         {/* RAM Chart */}
-        <div className="p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl">
-          <h3 className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-4 flex items-center gap-2">
+        <div className="p-3.5 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-md sm:shadow-2xl">
+          <h3 className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-2.5 sm:mb-4 flex items-center gap-2">
             <Server className="h-4 w-4 text-purple-500" />
             <span>{t.ramHistory} (%)</span>
           </h3>
-          <div className="h-64 w-full">
+          <div className="h-44 sm:h-64 w-full">
             {active && (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData}>
@@ -257,8 +350,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#888' }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#888' }} />
+                  <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#888' }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: '#888' }} />
                   <Tooltip contentStyle={{ backgroundColor: '#121214', borderColor: '#333', borderRadius: '12px' }} />
                   <Area type="monotone" dataKey="ram" stroke="#a855f7" fillOpacity={1} fill="url(#ramColor)" strokeWidth={2} />
                 </AreaChart>
@@ -268,18 +361,18 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
         </div>
 
         {/* Network Traffic Chart */}
-        <div className="p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl lg:col-span-2">
-          <h3 className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-4 flex items-center gap-2">
+        <div className="p-3.5 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-md sm:shadow-2xl lg:col-span-2">
+          <h3 className="text-xs font-semibold text-neutral-800 dark:text-neutral-300 mb-2.5 sm:mb-4 flex items-center gap-2">
             <Network className="h-4 w-4 text-emerald-500" />
             <span>{t.netHistory}</span>
           </h3>
-          <div className="h-64 w-full">
+          <div className="h-44 sm:h-64 w-full">
             {active && (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#888' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#888' }} />
+                  <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#888' }} />
+                  <YAxis tick={{ fontSize: 9, fill: '#888' }} />
                   <Tooltip contentStyle={{ backgroundColor: '#121214', borderColor: '#333', borderRadius: '12px' }} />
                   <Line type="monotone" dataKey="rx" name={t.rxSpeed} stroke="#10b981" strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="tx" name={t.txSpeed} stroke="#3b82f6" strokeWidth={2} dot={false} />

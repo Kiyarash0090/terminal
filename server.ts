@@ -1135,6 +1135,104 @@ async function getBestPipCommand(logs?: string[]): Promise<string> {
   return 'python3 -m pip';
 }
 
+// ---------------------- PYTHON PACKAGES MANAGEMENT ----------------------
+app.get('/api/python/packages', async (req: Request, res: Response) => {
+  try {
+    const pipCmd = await getBestPipCommand();
+    let packages: { name: string; version: string }[] = [];
+    try {
+      const { stdout } = await execAsync(`${pipCmd} list --format=json`);
+      packages = JSON.parse(stdout.trim());
+    } catch {
+      const pyScript = `import importlib.metadata, json
+try:
+    dists = [{'name': d.metadata['Name'], 'version': d.version} for d in importlib.metadata.distributions()]
+except Exception:
+    import pkg_resources
+    dists = [{'name': p.project_name, 'version': p.version} for p in pkg_resources.working_set]
+print(json.dumps(dists))`;
+      const { stdout } = await execFileAsync('python3', ['-c', pyScript]);
+      packages = JSON.parse(stdout.trim());
+    }
+    packages.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    res.json({ packages });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to list Python packages: ' + err.message });
+  }
+});
+
+app.post('/api/python/packages/uninstall', async (req: Request, res: Response) => {
+  try {
+    const { packages, uninstallAll } = req.body;
+    const pipCmd = await getBestPipCommand();
+
+    let targetPackages: string[] = [];
+
+    if (uninstallAll) {
+      let allPkgs: { name: string; version: string }[] = [];
+      try {
+        const { stdout } = await execAsync(`${pipCmd} list --format=json`);
+        allPkgs = JSON.parse(stdout.trim());
+      } catch {
+        const pyScript = `import importlib.metadata, json; print(json.dumps([{'name': d.metadata['Name']} for d in importlib.metadata.distributions()]))`;
+        const { stdout } = await execFileAsync('python3', ['-c', pyScript]);
+        allPkgs = JSON.parse(stdout.trim());
+      }
+      const essential = ['pip', 'setuptools', 'wheel'];
+      targetPackages = allPkgs.map(p => p.name).filter(name => !essential.includes(name.toLowerCase()));
+    } else if (Array.isArray(packages) && packages.length > 0) {
+      targetPackages = packages;
+    }
+
+    if (targetPackages.length === 0) {
+      return res.status(400).json({ error: 'هیچ کتابخانه‌ای برای حذف انتخاب نشده است' });
+    }
+
+    const safePackages = targetPackages.filter(p => typeof p === 'string' && /^[a-zA-Z0-9_\-\.]+$/.test(p));
+    if (safePackages.length === 0) {
+      return res.status(400).json({ error: 'نام کتابخانه‌ها نامعتبر است' });
+    }
+
+    const pkgListStr = safePackages.map(p => `"${p}"`).join(' ');
+    let output = '';
+    try {
+      const { stdout, stderr } = await execAsync(`${pipCmd} uninstall -y --break-system-packages ${pkgListStr}`);
+      output = stdout + (stderr ? '\n' + stderr : '');
+    } catch (err1: any) {
+      const { stdout, stderr } = await execAsync(`${pipCmd} uninstall -y ${pkgListStr}`);
+      output = stdout + (stderr ? '\n' + stderr : '');
+    }
+
+    res.json({ success: true, message: `تعداد ${safePackages.length} کتابخانه با موفقیت حذف شد`, output });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در حذف کتابخانه‌ها: ' + err.message });
+  }
+});
+
+app.post('/api/python/packages/install', async (req: Request, res: Response) => {
+  try {
+    const { packageName } = req.body;
+    if (!packageName || typeof packageName !== 'string' || !packageName.trim()) {
+      return res.status(400).json({ error: 'نام کتابخانه الزامی است' });
+    }
+    const pipCmd = await getBestPipCommand();
+    const pkg = packageName.trim();
+    
+    let output = '';
+    try {
+      const { stdout, stderr } = await execAsync(`${pipCmd} install "${pkg}" --break-system-packages`);
+      output = stdout + (stderr ? '\n' + stderr : '');
+    } catch (err1: any) {
+      const { stdout, stderr } = await execAsync(`${pipCmd} install "${pkg}"`);
+      output = stdout + (stderr ? '\n' + stderr : '');
+    }
+
+    res.json({ success: true, message: `کتابخانه ${pkg} با موفقیت نصب شد`, output });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در نصب کتابخانه: ' + err.message });
+  }
+});
+
 async function installPythonRequirements(workDir: string, logs: string[]): Promise<void> {
   if (!fs.existsSync(path.join(workDir, 'requirements.txt'))) return;
 
@@ -2084,8 +2182,13 @@ app.post('/api/vpn/configs/add', async (req: Request, res: Response) => {
 
 app.post('/api/vpn/configs/delete', async (req: Request, res: Response) => {
   try {
-    const { index } = req.body;
-    if (index === undefined) return res.status(400).json({ error: 'شناسه کانفیگ الزامی است' });
+    const { index, indices } = req.body;
+    if (indices && Array.isArray(indices) && indices.length > 0) {
+      const indicesStr = indices.join(',');
+      const data = await runVpnCli('delete', [indicesStr]);
+      return res.json(data);
+    }
+    if (index === undefined) return res.status(400).json({ error: 'شناسه یا لیست کانفیگ‌ها الزامی است' });
     const data = await runVpnCli('delete', [String(index)]);
     res.json(data);
   } catch (err: any) {
@@ -2124,8 +2227,14 @@ app.post('/api/vpn/stop', async (req: Request, res: Response) => {
 
 app.post('/api/vpn/test', async (req: Request, res: Response) => {
   try {
-    const { index, testAll } = req.body;
-    const arg = testAll ? 'all' : (index !== undefined ? String(index) : 'all');
+    const { index, mode, ping, testAll } = req.body;
+    if (index !== undefined) {
+      const modeStr = mode || 'full';
+      const pingStr = ping !== undefined && ping !== null ? String(ping) : 'null';
+      const data = await runVpnCli('test', [String(index), modeStr, pingStr]);
+      return res.json(data);
+    }
+    const arg = testAll ? 'all' : 'all';
     const data = await runVpnCli('test', [arg]);
     res.json(data);
   } catch (err: any) {

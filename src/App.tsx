@@ -120,12 +120,12 @@ export default function App() {
       />
 
       {/* Main Layout Area */}
-      <div className="flex flex-col md:flex-row min-h-[calc(100vh-4rem)]">
+      <div className="flex flex-col md:flex-row min-h-[calc(100vh-3rem)] sm:min-h-[calc(100vh-3.5rem)] md:min-h-[calc(100vh-4rem)]">
         {/* Sidebar */}
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} lang={lang} />
 
         {/* Content Pane */}
-        <main className="flex-1 p-4 md:p-6 overflow-y-auto">
+        <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto">
           <div className={activeTab === 'monitoring' ? '' : 'hidden'}>
             <MonitoringDashboard token={auth.token} lang={lang} active={activeTab === 'monitoring'} />
           </div>

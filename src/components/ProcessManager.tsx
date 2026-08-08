@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2, Boxes } from 'lucide-react';
 import { BackgroundTask, SystemProcess, Language } from '../types';
 import { translations } from '../locales/translations';
 import { GithubUploadDeployModal } from './GithubUploadDeployModal';
 import { ProjectUpdateModal } from './ProjectUpdateModal';
+import { PythonPackagesModal } from './PythonPackagesModal';
 
 interface ProcessManagerProps {
   token: string | null;
@@ -17,8 +18,9 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
   const [loading, setLoading] = useState(true);
   const [defaultPath, setDefaultPath] = useState<string>('/app/applet');
 
-  // New script state
+  // New script & package modals state
   const [isGithubDeployModalOpen, setIsGithubDeployModalOpen] = useState(false);
+  const [isPythonPackagesModalOpen, setIsPythonPackagesModalOpen] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -45,12 +47,17 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
 
   const modalLogEndRef = useRef<HTMLDivElement>(null);
   const modalLogContainerRef = useRef<HTMLDivElement>(null);
+  const scrollPosRef = useRef<number>(0);
+  const isProgrammaticScrollRef = useRef<boolean>(false);
 
   const handleLogScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (isProgrammaticScrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-    // If user is within 40px of the bottom, enable auto-scroll; otherwise disable it (user scrolled up to read old logs)
     const isAtBottom = scrollHeight - scrollTop - clientHeight <= 40;
     setAutoScrollLogs(isAtBottom);
+    if (!isAtBottom) {
+      scrollPosRef.current = scrollTop;
+    }
   };
 
   const fetchProcesses = async () => {
@@ -91,15 +98,24 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
         });
         if (res.ok) {
           const data = await res.json();
-          // Find updated task status
           const currentTask = tasks.find(t => t.id === activeTaskLogs.id);
           const isStillRunning = currentTask ? currentTask.status === 'running' : false;
+          const newLogs = data.logs || [];
 
-          setActiveTaskLogs(prev => prev ? {
-            ...prev,
-            logs: data.logs || [],
-            isRunning: isStillRunning
-          } : null);
+          setActiveTaskLogs(prev => {
+            if (!prev) return null;
+            if (prev.logs.length === newLogs.length && prev.isRunning === isStillRunning && prev.logs.every((l, i) => l === newLogs[i])) {
+              return prev;
+            }
+            if (!autoScrollLogs && modalLogContainerRef.current) {
+              scrollPosRef.current = modalLogContainerRef.current.scrollTop;
+            }
+            return {
+              ...prev,
+              logs: newLogs,
+              isRunning: isStillRunning
+            };
+          });
         }
       } catch (err) {
         console.error('Failed to poll logs:', err);
@@ -111,10 +127,34 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
     return () => clearInterval(logInterval);
   }, [activeTaskLogs?.id, token, tasks]);
 
-  // Auto scroll log modal only if user is at bottom (autoScrollLogs is true)
-  useEffect(() => {
-    if (activeTaskLogs && autoScrollLogs) {
-      modalLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    const container = modalLogContainerRef.current;
+    if (!container) return;
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior
+    });
+    modalLogEndRef.current?.scrollIntoView({ behavior });
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 400);
+  };
+
+  // Auto scroll log modal or preserve scroll position when auto-scroll is disabled
+  useLayoutEffect(() => {
+    const container = modalLogContainerRef.current;
+    if (!container) return;
+
+    if (autoScrollLogs) {
+      scrollToBottom('smooth');
+    } else {
+      isProgrammaticScrollRef.current = true;
+      container.scrollTop = scrollPosRef.current;
+      const timer = setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 150);
+      return () => clearTimeout(timer);
     }
   }, [activeTaskLogs?.logs, autoScrollLogs]);
 
@@ -250,6 +290,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
           <button
             onClick={fetchProcesses}
             className="p-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition cursor-pointer"
+            title={lang === 'fa' ? 'بروزرسانی' : 'Refresh'}
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -259,54 +300,61 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
 
 
       {/* Dedicated Deploy & Launch Section */}
-      <div className="p-4 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition hover:shadow-md">
-        <div className="flex items-start gap-3.5">
-          <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
-            <UploadCloud className="h-5 w-5 sm:h-6 sm:w-6" />
+      <div className="p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 transition hover:shadow-md">
+        <div className="flex items-start gap-2.5 sm:gap-3.5">
+          <div className="p-2 sm:p-3 rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+            <UploadCloud className="h-4 w-4 sm:h-6 sm:w-6" />
           </div>
           <div>
-            <h3 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-white mb-0.5">
+            <h3 className="text-xs sm:text-base font-bold text-neutral-900 dark:text-white mb-0.5">
               {lang === 'fa' ? 'راه‌اندازی و دپلوی پروژه جدید' : 'Launch & Deploy New Project'}
             </h3>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed max-w-xl">
+            <p className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed max-w-xl">
               {lang === 'fa'
                 ? 'دپلوی مستقیم از گیت‌هاب یا فایل ZIP به عنوان پردازش پس‌زمینه با لاگ زنده'
                 : 'Deploy directly from GitHub repositories or zip archives as a persistent background process with real-time logs.'}
             </p>
           </div>
         </div>
-        <div className="shrink-0 w-full sm:w-auto">
+        <div className="shrink-0 w-full sm:w-auto flex items-center gap-2">
+          <button
+            onClick={() => setIsPythonPackagesModalOpen(true)}
+            className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+          >
+            <Boxes className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span>{lang === 'fa' ? 'کتابخانه‌های پایتون' : 'Python Packages'}</span>
+          </button>
           <button
             onClick={() => setIsGithubDeployModalOpen(true)}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold bg-[#238636] hover:bg-[#2ea043] text-white transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-500/20 whitespace-nowrap"
+            className="flex-1 sm:flex-initial px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-[#238636] hover:bg-[#2ea043] text-white transition flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer shadow-md shadow-emerald-500/20 whitespace-nowrap"
           >
-            <UploadCloud className="h-4 w-4" />
+            <UploadCloud className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             <span>{lang === 'fa' ? 'دپلوی پروژه جدید' : 'Start New Deployment'}</span>
           </button>
         </div>
       </div>
 
       {/* Active Background Tasks List */}
-      <div className="p-4 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-4">
-        <div className="flex items-center justify-between border-b border-neutral-100 dark:border-white/5 pb-3">
+      <div className="p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex items-center justify-between border-b border-neutral-100 dark:border-white/5 pb-2.5">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-200">
+            <h3 className="text-xs sm:text-sm font-bold text-neutral-800 dark:text-neutral-200">
               {t.activeTasks}
             </h3>
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-white/5 text-neutral-500 font-mono">
+            <span className="text-[10px] sm:text-[11px] px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-white/5 text-neutral-500 font-mono">
               {tasks.length}
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {tasks.some(t => t.status !== 'running') && (
               <button
                 onClick={handleClearStoppedTasks}
-                className="px-2.5 py-1 rounded-lg text-xs font-medium border border-rose-500/20 text-rose-500 hover:bg-rose-500/10 transition flex items-center gap-1 cursor-pointer"
+                className="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-medium border border-rose-500/20 text-rose-500 hover:bg-rose-500/10 transition flex items-center gap-1 cursor-pointer"
                 title={lang === 'fa' ? 'حذف تمام اسکریپت‌های متوقف شده' : 'Clear stopped tasks'}
               >
                 <Trash2 className="h-3 w-3" />
-                <span>{lang === 'fa' ? 'پاکسازی متوقف‌شده‌ها' : 'Clear Stopped'}</span>
+                <span>{lang === 'fa' ? 'پاکسازی' : 'Clear Stopped'}</span>
               </button>
             )}
             <span className="text-xs text-neutral-500 hidden sm:inline">
@@ -316,28 +364,28 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
         </div>
 
         {tasks.length === 0 ? (
-          <div className="text-center py-8 text-neutral-400 text-xs">
-            <Terminal className="h-8 w-8 mx-auto mb-2 opacity-30 text-neutral-400" />
+          <div className="text-center py-6 sm:py-8 text-neutral-400 text-xs">
+            <Terminal className="h-6 w-6 sm:h-8 sm:w-8 mx-auto mb-2 opacity-30 text-neutral-400" />
             <p>{lang === 'fa' ? 'هیچ اسکریپت پس‌زمینه‌ای در حال اجرا نیست.' : 'No active background scripts found.'}</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {tasks.map((task) => (
               <div
                 key={task.id}
-                className="p-3.5 rounded-xl border border-neutral-200/80 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] hover:bg-neutral-100/60 dark:hover:bg-white/[0.04] transition flex flex-col md:flex-row md:items-center justify-between gap-3"
+                className="p-2.5 sm:p-3.5 rounded-lg sm:rounded-xl border border-neutral-200/80 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] hover:bg-neutral-100/60 dark:hover:bg-white/[0.04] transition flex flex-col md:flex-row md:items-center justify-between gap-2.5"
               >
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 shrink-0 mt-0.5">
-                    <Terminal className="h-4 w-4" />
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <div className="p-1.5 sm:p-2 rounded-lg bg-blue-500/10 text-blue-500 shrink-0 mt-0.5">
+                    <Terminal className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                       <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
                         {task.name}
                       </span>
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold uppercase ${
                           task.status === 'running'
                             ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
                             : task.status === 'completed'
@@ -345,58 +393,58 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
                             : 'bg-rose-500/10 text-rose-400'
                         }`}
                       >
-                        {task.status === 'running' && <Radio className="h-2.5 w-2.5 animate-pulse" />}
+                        {task.status === 'running' && <Radio className="h-2 w-2 sm:h-2.5 sm:w-2.5 animate-pulse" />}
                         {task.status}
                       </span>
                       {task.pid && (
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                        <span className="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
                           PID: {task.pid}
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400 truncate mt-1 dir-ltr text-right">
+                    <p className="text-[10px] sm:text-[11px] font-mono text-neutral-500 dark:text-neutral-400 truncate mt-0.5 sm:mt-1 dir-ltr text-right">
                       {task.command}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-1.5 pt-2 md:pt-0 border-t md:border-t-0 border-neutral-200/60 dark:border-white/5 shrink-0">
+                <div className="flex items-center justify-end gap-1 pt-1.5 md:pt-0 border-t md:border-t-0 border-neutral-200/60 dark:border-white/5 shrink-0">
                   <button
                     onClick={() => handleViewLogs(task)}
-                    className="px-2.5 py-1.5 rounded-lg bg-blue-600/10 text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white transition flex items-center gap-1 cursor-pointer text-xs font-medium"
+                    className="px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-md sm:rounded-lg bg-blue-600/10 text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white transition flex items-center gap-1 cursor-pointer text-[11px] sm:text-xs font-medium"
                   >
-                    <Eye className="h-3.5 w-3.5" />
-                    <span>{lang === 'fa' ? 'مشاهده لاگ' : 'View Logs'}</span>
+                    <Eye className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                    <span>{lang === 'fa' ? 'لاگ' : 'Logs'}</span>
                   </button>
                   <button
                     onClick={() => handleRestartTask(task.id)}
-                    className="p-1.5 rounded-lg bg-neutral-200/60 dark:bg-white/5 text-neutral-700 dark:text-neutral-300 hover:bg-amber-500 hover:text-white transition cursor-pointer"
+                    className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-neutral-200/60 dark:bg-white/5 text-neutral-700 dark:text-neutral-300 hover:bg-amber-500 hover:text-white transition cursor-pointer"
                     title={t.restartTask}
                   >
-                    <RefreshCw className="h-3.5 w-3.5" />
+                    <RefreshCw className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   </button>
                   <button
                     onClick={() => setUpdatingTask(task)}
-                    className="p-1.5 rounded-lg bg-neutral-200/60 dark:bg-white/5 text-neutral-700 dark:text-neutral-300 hover:bg-indigo-600 hover:text-white transition cursor-pointer"
+                    className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-neutral-200/60 dark:bg-white/5 text-neutral-700 dark:text-neutral-300 hover:bg-indigo-600 hover:text-white transition cursor-pointer"
                     title={t.updateProject}
                   >
-                    <GitCommit className="h-3.5 w-3.5" />
+                    <GitCommit className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   </button>
                   {task.status === 'running' && (
                     <button
                       onClick={() => handleKillTask(task.id)}
-                      className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition flex items-center gap-1 cursor-pointer text-xs font-medium"
+                      className="px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-md sm:rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition flex items-center gap-1 cursor-pointer text-[11px] sm:text-xs font-medium"
                     >
-                      <StopCircle className="h-3.5 w-3.5" />
+                      <StopCircle className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                       <span>{lang === 'fa' ? 'توقف' : 'Stop'}</span>
                     </button>
                   )}
                   <button
                     onClick={() => handleRemoveTask(task.id)}
-                    className="p-1.5 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-600 hover:text-white transition cursor-pointer"
+                    className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-600 hover:text-white transition cursor-pointer"
                     title={lang === 'fa' ? 'حذف از جدول' : 'Remove from table'}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   </button>
                 </div>
               </div>
@@ -406,45 +454,45 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
       </div>
 
       {/* System Processes Table */}
-      <div className="p-4 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 dark:border-white/5 pb-3">
-          <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-200">{t.systemProcesses}</h3>
-          <div className="relative">
-            <Search className="h-3.5 w-3.5 text-neutral-400 absolute left-3 top-2.5" />
+      <div className="p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-neutral-100 dark:border-white/5 pb-2.5">
+          <h3 className="text-xs sm:text-sm font-bold text-neutral-800 dark:text-neutral-200">{t.systemProcesses}</h3>
+          <div className="relative w-full sm:w-64">
+            <Search className="h-3.5 w-3.5 text-neutral-400 absolute left-2.5 top-2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t.searchProcess}
-              className="pl-8 pr-3 py-1.5 rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs text-neutral-900 dark:text-neutral-100 w-full sm:w-64 focus:ring-1 focus:ring-blue-500 outline-none"
+              className="pl-7 pr-3 py-1 rounded-lg sm:rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-[11px] sm:text-xs text-neutral-900 dark:text-neutral-100 w-full focus:ring-1 focus:ring-blue-500 outline-none"
             />
           </div>
         </div>
 
-        <div className="overflow-x-auto max-h-96 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-800">
-          <table className="w-full text-left text-xs font-mono">
-            <thead className="bg-neutral-100 dark:bg-white/5 text-neutral-500 font-semibold sticky top-0 border-b border-neutral-200 dark:border-white/10">
+        <div className="overflow-x-auto max-h-96 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-800 dir-ltr">
+          <table className="w-full min-w-[480px] text-left text-[11px] sm:text-xs font-mono">
+            <thead className="bg-neutral-200 dark:bg-[#18181b] text-neutral-600 dark:text-neutral-400 font-semibold sticky top-0 z-10 border-b border-neutral-300 dark:border-white/10">
               <tr>
-                <th className="p-2.5">PID</th>
-                <th className="p-2.5 hidden sm:table-cell">User</th>
-                <th className="p-2.5">CPU %</th>
-                <th className="p-2.5">MEM %</th>
-                <th className="p-2.5">Command</th>
-                <th className="p-2.5 text-right">{t.actions}</th>
+                <th className="p-1.5 sm:p-2.5 w-14 sm:w-16">PID</th>
+                <th className="p-1.5 sm:p-2.5 w-16 sm:w-20 hidden sm:table-cell">User</th>
+                <th className="p-1.5 sm:p-2.5 w-16 sm:w-20">CPU %</th>
+                <th className="p-1.5 sm:p-2.5 w-16 sm:w-20">MEM %</th>
+                <th className="p-1.5 sm:p-2.5">Command</th>
+                <th className="p-1.5 sm:p-2.5 text-right w-16 sm:w-20">{t.actions}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100 dark:divide-white/5">
               {filteredSysProcesses.slice(0, 30).map((proc) => (
                 <tr key={proc.pid} className="hover:bg-neutral-50 dark:hover:bg-white/5 transition">
-                  <td className="p-2.5 text-blue-500 dark:text-blue-400 font-bold">{proc.pid}</td>
-                  <td className="p-2.5 text-neutral-500 hidden sm:table-cell">{proc.user}</td>
-                  <td className="p-2.5 text-emerald-600 dark:text-emerald-400 font-semibold">{proc.cpu}%</td>
-                  <td className="p-2.5 text-purple-600 dark:text-purple-400 font-semibold">{proc.mem}%</td>
-                  <td className="p-2.5 text-neutral-700 dark:text-neutral-300 max-w-[140px] sm:max-w-xs truncate dir-ltr text-right">{proc.command}</td>
-                  <td className="p-2.5 text-right">
+                  <td className="p-1.5 sm:p-2.5 text-blue-500 dark:text-blue-400 font-bold whitespace-nowrap">{proc.pid}</td>
+                  <td className="p-1.5 sm:p-2.5 text-neutral-500 hidden sm:table-cell whitespace-nowrap">{proc.user}</td>
+                  <td className="p-1.5 sm:p-2.5 text-emerald-600 dark:text-emerald-400 font-semibold whitespace-nowrap">{proc.cpu}%</td>
+                  <td className="p-1.5 sm:p-2.5 text-purple-600 dark:text-purple-400 font-semibold whitespace-nowrap">{proc.mem}%</td>
+                  <td className="p-1.5 sm:p-2.5 text-neutral-700 dark:text-neutral-300 max-w-[140px] sm:max-w-xs truncate">{proc.command}</td>
+                  <td className="p-1.5 sm:p-2.5 text-right">
                     <button
                       onClick={() => handleKillTask(undefined, proc.pid)}
-                      className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition cursor-pointer text-[11px]"
+                      className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition cursor-pointer text-[10px] sm:text-[11px] font-sans font-bold"
                     >
                       Kill
                     </button>
@@ -538,7 +586,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
                   type="button"
                   onClick={() => {
                     setAutoScrollLogs(true);
-                    modalLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                    scrollToBottom('smooth');
                   }}
                   className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-sans px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 opacity-95 hover:opacity-100 transition cursor-pointer border border-white/20 backdrop-blur-md z-20"
                 >
@@ -593,6 +641,14 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
         isDeployMode={true}
         initialTaskName=""
         initialCommand=""
+      />
+
+      {/* Python Packages Manager Modal */}
+      <PythonPackagesModal
+        token={token}
+        lang={lang}
+        isOpen={isPythonPackagesModalOpen}
+        onClose={() => setIsPythonPackagesModalOpen(false)}
       />
     </div>
   );

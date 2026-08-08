@@ -29,7 +29,8 @@ import {
   Code2,
   CheckCircle2,
   AlertCircle,
-  Edit3
+  Edit3,
+  Search
 } from 'lucide-react';
 import { FileItem, Language } from '../types';
 import { translations } from '../locales/translations';
@@ -67,6 +68,20 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
   const [dbTableData, setDbTableData] = useState<{ columns: { name: string; type: string }[]; rows: any[] } | null>(null);
   const [dbLoading, setDbLoading] = useState<boolean>(false);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [dbSearchTerm, setDbSearchTerm] = useState<string>('');
+
+  const filteredDbRows = React.useMemo(() => {
+    if (!dbTableData?.rows) return [];
+    if (!dbSearchTerm.trim()) return dbTableData.rows;
+    const term = dbSearchTerm.toLowerCase().trim();
+    return dbTableData.rows.filter((row) =>
+      Object.values(row).some((val) => {
+        if (val === null || val === undefined) return false;
+        if (typeof val === 'object') return JSON.stringify(val).toLowerCase().includes(term);
+        return String(val).toLowerCase().includes(term);
+      })
+    );
+  }, [dbTableData, dbSearchTerm]);
 
   // SQLite Editor & SQL Console States
   const [dbMode, setDbMode] = useState<'table' | 'sql'>('table');
@@ -757,10 +772,10 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
         </div>
 
         {/* File Manager Action Buttons */}
-        <div className="flex items-center gap-2 overflow-x-auto max-w-full pb-1 scrollbar-thin shrink-0 whitespace-nowrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto max-w-full pb-1 scrollbar-none shrink-0 whitespace-nowrap">
           <button
             onClick={() => setIsDirectUploadModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-[#238636] hover:bg-[#2ea043] text-white transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-500/25"
+            className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold bg-[#238636] hover:bg-[#2ea043] text-white transition flex items-center gap-1 sm:gap-1.5 cursor-pointer shadow-md shadow-emerald-500/20"
           >
             <UploadCloud className="h-3.5 w-3.5" />
             <span>{lang === 'fa' ? 'آپلود' : 'Upload'}</span>
@@ -768,7 +783,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
           <button
             onClick={() => setIsNewFolderModalOpen(true)}
-            className="px-3 py-2 rounded-xl text-xs font-medium border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition flex items-center gap-1.5 cursor-pointer"
+            className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-medium border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition flex items-center gap-1 sm:gap-1.5 cursor-pointer"
           >
             <FolderPlus className="h-3.5 w-3.5 text-amber-500" />
             <span>{t.newFolder}</span>
@@ -776,7 +791,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
           <button
             onClick={() => setIsNewFileModalOpen(true)}
-            className="px-3 py-2 rounded-xl text-xs font-medium border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition flex items-center gap-1.5 cursor-pointer"
+            className="px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-medium border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition flex items-center gap-1 sm:gap-1.5 cursor-pointer"
           >
             <FilePlus className="h-3.5 w-3.5 text-blue-500" />
             <span>{t.newFile}</span>
@@ -784,16 +799,17 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
           <button
             onClick={() => fetchFiles(currentPath)}
-            className="p-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-lg sm:rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition cursor-pointer"
+            title={lang === 'fa' ? 'بروزرسانی' : 'Refresh'}
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
       {/* Upload Status Alert Bar */}
       {uploadStatus && (
-        <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium flex items-center gap-2.5 animate-pulse">
+        <div className="p-2.5 sm:p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium flex items-center gap-2 animate-pulse">
           <RefreshCw className={`h-4 w-4 text-blue-400 ${isUploading ? 'animate-spin' : ''}`} />
           <span>{uploadStatus}</span>
         </div>
@@ -801,28 +817,28 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
       {/* Bulk Actions Bar */}
       {selectedPaths.length > 0 && (
-        <div className="p-3 rounded-xl bg-neutral-900 text-white dark:bg-neutral-800 flex items-center justify-between shadow-xl animate-fadeIn">
-          <div className="text-xs font-semibold">
+        <div className="p-2.5 sm:p-3 rounded-xl bg-neutral-900 text-white dark:bg-neutral-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 shadow-xl animate-fadeIn">
+          <div className="text-[11px] sm:text-xs font-semibold text-center sm:text-left">
             {t.selectedCount ? t.selectedCount.replace('{count}', String(selectedPaths.length)) : `${selectedPaths.length} selected`}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center gap-1.5 sm:gap-2">
             <button
               onClick={() => setSelectedPaths([])}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-700 hover:bg-neutral-600 dark:bg-neutral-600 dark:hover:bg-neutral-500 transition flex items-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold bg-neutral-700 hover:bg-neutral-600 dark:bg-neutral-600 dark:hover:bg-neutral-500 transition flex items-center justify-center gap-1 cursor-pointer"
             >
               <X className="h-3.5 w-3.5" />
               <span>{t.deselectAll || 'لغو انتخاب'}</span>
             </button>
             <button
               onClick={handleBulkDownload}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 transition flex items-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 transition flex items-center justify-center gap-1 cursor-pointer"
             >
               <Download className="h-3.5 w-3.5" />
               <span>{t.download}</span>
             </button>
             <button
               onClick={handleBulkDelete}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 transition flex items-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold bg-rose-600 hover:bg-rose-500 transition flex items-center justify-center gap-1 cursor-pointer"
             >
               <Trash2 className="h-3.5 w-3.5" />
               <span>{t.deleteSelected}</span>
@@ -1213,6 +1229,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                   setDbError(null);
                   setEditingDbRow(null);
                   setSqlResult(null);
+                  setDbSearchTerm('');
                 }}
                 className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-500 dark:text-neutral-400 transition cursor-pointer"
               >
@@ -1242,7 +1259,10 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                     {dbTables.map((tableName) => (
                       <button
                         key={tableName}
-                        onClick={() => setSelectedDbTable(tableName)}
+                        onClick={() => {
+                          setSelectedDbTable(tableName);
+                          setDbSearchTerm('');
+                        }}
                         className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer ${
                           selectedDbTable === tableName
                             ? 'bg-amber-500 text-white shadow-md'
@@ -1283,31 +1303,55 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
                     {!dbLoading && !dbError && selectedDbTable && dbTableData && (
                       <div className="flex-1 overflow-hidden flex flex-col space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold text-neutral-800 dark:text-neutral-200 bg-neutral-100 dark:bg-neutral-800 px-2.5 py-1 rounded-lg font-mono">
                               {selectedDbTable}
                             </span>
                             <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                              {t.rowsCount.replace('{count}', dbTableData.rows.length.toString())}
+                              {dbSearchTerm.trim()
+                                ? (lang === 'fa'
+                                    ? `${filteredDbRows.length} از ${dbTableData.rows.length} ردیف`
+                                    : `${filteredDbRows.length} of ${dbTableData.rows.length} rows`)
+                                : t.rowsCount.replace('{count}', dbTableData.rows.length.toString())}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-2">
+                            {/* Search Bar */}
+                            <div className="relative flex-1 sm:w-56">
+                              <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400" />
+                              <input
+                                type="text"
+                                value={dbSearchTerm}
+                                onChange={(e) => setDbSearchTerm(e.target.value)}
+                                placeholder={lang === 'fa' ? 'جستجو در جدول...' : 'Search in table...'}
+                                className="w-full pr-8 pl-7 py-1.5 bg-neutral-100 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700 rounded-xl text-xs text-neutral-800 dark:text-neutral-200 placeholder-neutral-400 focus:outline-none focus:border-amber-500 transition"
+                              />
+                              {dbSearchTerm && (
+                                <button
+                                  onClick={() => setDbSearchTerm('')}
+                                  className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+
                             <button
                               onClick={() => {
                                 const emptyRow: Record<string, any> = {};
                                 dbTableData.columns.forEach(c => { emptyRow[c.name] = ''; });
                                 setEditingDbRow({ isNew: true, rowData: emptyRow });
                               }}
-                              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
                             >
                               <Plus className="h-3.5 w-3.5" />
                               <span>{lang === 'fa' ? 'افزودن ردیف' : 'Add Row'}</span>
                             </button>
                             <button
                               onClick={refetchDbTableData}
-                              className="p-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition"
+                              className="p-1.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300 transition shrink-0"
                               title={lang === 'fa' ? 'بازخوانی' : 'Refresh'}
                             >
                               <RefreshCw className="h-3.5 w-3.5" />
@@ -1333,7 +1377,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800 font-mono text-[11px] text-neutral-800 dark:text-neutral-200">
-                              {dbTableData.rows.map((row, idx) => (
+                              {filteredDbRows.map((row, idx) => (
                                 <tr key={idx} className="hover:bg-neutral-100/50 dark:hover:bg-white/5 transition">
                                   {/* Action Buttons */}
                                   <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -1375,10 +1419,12 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                                   })}
                                 </tr>
                               ))}
-                              {dbTableData.rows.length === 0 && (
+                              {filteredDbRows.length === 0 && (
                                 <tr>
                                   <td colSpan={dbTableData.columns.length + 1} className="px-4 py-8 text-center text-xs text-neutral-500 dark:text-neutral-400">
-                                    {lang === 'fa' ? 'هیچ ردیفی یافت نشد' : 'No rows found'}
+                                    {dbSearchTerm.trim()
+                                      ? (lang === 'fa' ? 'هیچ ردیفی مطابق با عبارت جستجو یافت نشد' : 'No rows matching search query')
+                                      : (lang === 'fa' ? 'هیچ ردیفی یافت نشد' : 'No rows found')}
                                   </td>
                                 </tr>
                               )}

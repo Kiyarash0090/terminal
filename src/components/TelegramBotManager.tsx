@@ -183,18 +183,18 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
   };
 
   return (
-    <div className="space-y-6" dir={isFa ? 'rtl' : 'ltr'}>
+    <div className="space-y-4 sm:space-y-6" dir={isFa ? 'rtl' : 'ltr'}>
       {/* Title Header */}
-      <div className="flex items-center justify-between border-b border-gray-100 dark:border-neutral-800 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-sky-50 dark:bg-sky-950/30 text-sky-500 rounded-xl">
-            <Bot size={24} />
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-neutral-800 pb-3 sm:pb-4 gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="p-2 sm:p-2.5 bg-sky-50 dark:bg-sky-950/30 text-sky-500 rounded-lg sm:rounded-xl shrink-0">
+            <Bot className="h-5 w-5 sm:h-6 sm:w-6" />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-neutral-100">
+          <div className="min-w-0">
+            <h1 className="text-sm sm:text-xl font-bold text-gray-900 dark:text-neutral-100 truncate">
               {isFa ? 'دستیار و ربات تلگرام ترمینال' : 'Telegram Terminal Assistant Bot'}
             </h1>
-            <p className="text-sm text-gray-500 dark:text-neutral-400 mt-0.5">
+            <p className="text-[11px] sm:text-sm text-gray-500 dark:text-neutral-400 mt-0.5 truncate">
               {isFa 
                 ? 'مدیریت و اتصال سرور به ربات تلگرام جهت کنترل از راه دور سیستم' 
                 : 'Manage and connect your server to Telegram for full remote-control'}
@@ -203,15 +203,15 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
         </div>
         
         {/* Status indicator */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {status.isRunning ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               {isFa ? 'در حال اجرا' : 'Running'}
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400">
-              <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+            <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400">
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-gray-400"></span>
               {isFa ? 'متوقف شده' : 'Stopped'}
             </span>
           )}
@@ -220,30 +220,30 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
 
       {/* Messages */}
       {message && (
-        <div className={`p-4 rounded-xl flex items-start gap-3 border ${
+        <div className={`p-3 sm:p-4 rounded-xl flex items-start gap-2.5 sm:gap-3 border ${
           message.type === 'success' 
             ? 'bg-emerald-50 dark:bg-emerald-950/10 border-emerald-100 dark:border-emerald-900/30 text-emerald-800 dark:text-emerald-400' 
             : 'bg-rose-50 dark:bg-rose-950/10 border-rose-100 dark:border-rose-900/30 text-rose-800 dark:text-rose-400'
         }`}>
-          {message.type === 'success' ? <CheckCircle2 size={18} className="mt-0.5 shrink-0" /> : <AlertCircle size={18} className="mt-0.5 shrink-0" />}
-          <span className="text-sm font-medium">{message.text}</span>
+          {message.type === 'success' ? <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5 mt-0.5 shrink-0" /> : <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 mt-0.5 shrink-0" />}
+          <span className="text-xs sm:text-sm font-medium">{message.text}</span>
         </div>
       )}
 
       {/* Grid Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         
         {/* Config and control Column */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-2xl p-5 shadow-sm">
-            <h3 className="text-md font-semibold text-gray-900 dark:text-neutral-100 mb-4 flex items-center gap-2">
-              <Save size={18} className="text-sky-500" />
+        <div className="lg:col-span-1 space-y-4 sm:space-y-6">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm">
+            <h3 className="text-xs sm:text-base font-semibold text-gray-900 dark:text-neutral-100 mb-3 sm:mb-4 flex items-center gap-2">
+              <Save className="h-4 w-4 sm:h-5 sm:w-5 text-sky-500" />
               {isFa ? 'پیکربندی هویت ربات' : 'Bot Configuration'}
             </h3>
 
-            <form onSubmit={handleSaveConfig} className="space-y-4">
+            <form onSubmit={handleSaveConfig} className="space-y-3 sm:space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1.5">
+                <label className="block text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1">
                   {isFa ? 'توکن ربات تلگرام (Bot Token)' : 'Telegram Bot Token'}
                 </label>
                 <input
@@ -252,12 +252,12 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
                   onChange={(e) => setBotConfig({ ...botConfig, bot_token: e.target.value })}
                   placeholder="e.g. 123456789:ABCdefGhI..."
                   required
-                  className="w-full px-3.5 py-2 text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
+                  className="w-full px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-lg sm:rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1.5">
+                <label className="block text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1">
                   {isFa ? 'شناسه عددی ادمین (Admin Chat ID)' : 'Admin User Chat ID'}
                 </label>
                 <input
@@ -266,12 +266,12 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
                   onChange={(e) => setBotConfig({ ...botConfig, admin_user_id: e.target.value })}
                   placeholder="e.g. 987654321"
                   required
-                  className="w-full px-3.5 py-2 text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
+                  className="w-full px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-lg sm:rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1.5">
+                <label className="block text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1">
                   {isFa ? 'آدرس لینک یا وب اپ پنل (Web Panel URL)' : 'Web Panel URL / WebApp'}
                 </label>
                 <input
@@ -279,31 +279,31 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
                   value={botConfig.web_url || ''}
                   onChange={(e) => setBotConfig({ ...botConfig, web_url: e.target.value })}
                   placeholder="e.g. https://your-server-panel.app"
-                  className="w-full px-3.5 py-2 text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
+                  className="w-full px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-lg sm:rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={configLoading || loading}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-400 text-white rounded-xl text-sm font-semibold cursor-pointer transition-colors mt-2"
+                className="w-full flex items-center justify-center gap-2 px-3.5 py-2 sm:px-4 sm:py-2.5 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors mt-2"
               >
-                {configLoading ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                {configLoading ? <RefreshCw className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin" /> : <Save className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
                 {isFa ? 'ذخیره تنظیمات' : 'Save Configuration'}
               </button>
             </form>
           </div>
 
           {/* Controller Card */}
-          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <h3 className="text-md font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
-              <Power size={18} className="text-indigo-500" />
+          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm space-y-3 sm:space-y-4">
+            <h3 className="text-xs sm:text-base font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+              <Power className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-500" />
               {isFa ? 'کنترلر وضعیت ربات' : 'Bot Process Control'}
             </h3>
 
             {!status.configValid && (
-              <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 rounded-xl flex gap-2 text-amber-800 dark:text-amber-400 text-xs">
-                <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+              <div className="p-2.5 sm:p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 rounded-lg sm:rounded-xl flex gap-2 text-amber-800 dark:text-amber-400 text-[11px] sm:text-xs">
+                <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                 <span>
                   {isFa 
                     ? 'پیکربندی ربات کامل نیست. ابتدا توکن معتبر و آیدی ادمین را وارد و ذخیره کنید.' 
@@ -312,30 +312,30 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
               </div>
             )}
 
-            <div className="flex gap-3">
+            <div className="flex gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={handleStartBot}
                 disabled={status.isRunning || !status.configValid || loading}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-100 dark:disabled:bg-neutral-800 disabled:text-gray-400 text-white rounded-xl text-sm font-semibold cursor-pointer transition-colors"
+                className="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-100 dark:disabled:bg-neutral-800 disabled:text-gray-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
               >
-                <Power size={16} />
-                {isFa ? 'راه‌اندازی ربات' : 'Start Bot'}
+                <Power className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                {isFa ? 'راه‌اندازی' : 'Start Bot'}
               </button>
 
               <button
                 type="button"
                 onClick={handleStopBot}
                 disabled={!status.isRunning || loading}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-rose-500 hover:bg-rose-600 disabled:bg-neutral-100 dark:disabled:bg-neutral-800 disabled:text-gray-400 text-white rounded-xl text-sm font-semibold cursor-pointer transition-colors"
+                className="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-rose-500 hover:bg-rose-600 disabled:bg-neutral-100 dark:disabled:bg-neutral-800 disabled:text-gray-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
               >
-                <Power size={16} />
+                <Power className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 {isFa ? 'خاموش کردن' : 'Stop Bot'}
               </button>
             </div>
 
             {status.isRunning && (
-              <div className="border-t border-gray-50 dark:border-neutral-800 pt-3 text-xs text-gray-500 dark:text-neutral-400 space-y-1.5">
+              <div className="border-t border-gray-50 dark:border-neutral-800 pt-2.5 text-[11px] sm:text-xs text-gray-500 dark:text-neutral-400 space-y-1">
                 <div className="flex justify-between">
                   <span>{isFa ? 'شناسه پردازش (PID):' : 'Process ID (PID):'}</span>
                   <span className="font-mono text-gray-700 dark:text-neutral-300 font-semibold">{status.pid}</span>
@@ -353,22 +353,22 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
 
         {/* Live Logs Column */}
         <div className="lg:col-span-2">
-          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-2xl p-5 shadow-sm flex flex-col h-[400px]">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-md font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
-                <RefreshCw size={16} className="text-sky-500" />
+          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col h-[320px] sm:h-[400px]">
+            <div className="flex justify-between items-center mb-3 sm:mb-4">
+              <h3 className="text-xs sm:text-base font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+                <RefreshCw className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-sky-500" />
                 {isFa ? 'لاگ‌های زنده ربات تلگرام' : 'Telegram Bot Live Output Logs'}
               </h3>
               <button 
                 onClick={fetchStatus}
-                className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 transition-colors"
+                className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 transition-colors cursor-pointer"
                 title={isFa ? 'بروزرسانی لاگ‌ها' : 'Refresh Logs'}
               >
-                <RefreshCw size={16} />
+                <RefreshCw className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
             </div>
 
-            <div className="flex-1 bg-neutral-950 border border-neutral-900 rounded-xl p-4 font-mono text-xs text-neutral-300 overflow-y-auto space-y-1 select-text">
+            <div className="flex-1 bg-neutral-950 border border-neutral-900 rounded-lg sm:rounded-xl p-2.5 sm:p-4 font-mono text-[11px] sm:text-xs text-neutral-300 overflow-y-auto space-y-1 select-text">
               {status.logs.length > 0 ? (
                 status.logs.map((log, idx) => (
                   <div key={idx} className="whitespace-pre-wrap break-all leading-relaxed hover:bg-neutral-900/50 px-1 py-0.5 rounded">
@@ -376,7 +376,7 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
                   </div>
                 ))
               ) : (
-                <div className="text-neutral-600 text-center py-12">
+                <div className="text-neutral-600 text-center py-8 sm:py-12">
                   {isFa ? 'هیچ خروجی یا لاگی برای نمایش وجود ندارد.' : 'No output logs available. Start the bot to see logs here.'}
                 </div>
               )}
