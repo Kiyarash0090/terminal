@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, File, Folder, X, Check, ArrowRight, GitCommit, Github } from 'lucide-react';
+import { UploadCloud, File, Folder, X, Check, ArrowRight, GitCommit, Github, Shield } from 'lucide-react';
 import { Language } from '../types';
 import { translations } from '../locales/translations';
 
@@ -40,6 +40,7 @@ export const GithubUploadDeployModal: React.FC<GithubUploadDeployModalProps> = (
   const [command, setCommand] = useState(initialCommand || 'python3 main.py');
   const [taskName, setTaskName] = useState(initialTaskName || 'MyServerApp');
   const [installReqs, setInstallReqs] = useState(true);
+  const [useVpn, setUseVpn] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -191,6 +192,7 @@ export const GithubUploadDeployModal: React.FC<GithubUploadDeployModalProps> = (
       formData.append('sourceType', sourceType);
       formData.append('targetDir', targetPath);
       formData.append('installRequirements', installReqs.toString());
+      formData.append('useVpn', useVpn.toString());
 
       if (sourceType === 'files') {
         const filePaths: string[] = [];
@@ -472,19 +474,39 @@ export const GithubUploadDeployModal: React.FC<GithubUploadDeployModalProps> = (
           )}
 
           {isDeployMode && (
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="installReqs"
-                checked={installReqs}
-                onChange={(e) => setInstallReqs(e.target.checked)}
-                className="rounded border-neutral-700 bg-neutral-800 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-              />
-              <label htmlFor="installReqs" className="text-xs text-neutral-300 cursor-pointer font-medium">
-                {lang === 'fa'
-                  ? 'نصب خودکار پیش‌نیازها از requirements.txt یا package.json'
-                  : 'Auto-install requirements from requirements.txt or package.json (pip install / npm install)'}
-              </label>
+            <div className="space-y-2.5 pt-1">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="installReqs"
+                  checked={installReqs}
+                  onChange={(e) => setInstallReqs(e.target.checked)}
+                  className="rounded border-neutral-700 bg-neutral-800 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                />
+                <label htmlFor="installReqs" className="text-xs text-neutral-300 cursor-pointer font-medium">
+                  {lang === 'fa'
+                    ? 'نصب خودکار پیش‌نیازها از requirements.txt یا package.json'
+                    : 'Auto-install requirements from requirements.txt or package.json (pip install / npm install)'}
+                </label>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useVpn"
+                  checked={useVpn}
+                  onChange={(e) => setUseVpn(e.target.checked)}
+                  className="rounded border-neutral-700 bg-neutral-800 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                />
+                <label htmlFor="useVpn" className="text-xs text-neutral-300 cursor-pointer font-medium flex items-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5 text-blue-400" />
+                  <span>
+                    {lang === 'fa'
+                      ? 'استفاده از پروکسی VPN (127.0.0.1:10808) در صورت روشن بودن VPN'
+                      : 'Use VPN proxy (127.0.0.1:10808) when VPN is enabled'}
+                  </span>
+                </label>
+              </div>
             </div>
           )}
 

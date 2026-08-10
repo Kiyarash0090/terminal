@@ -189,51 +189,156 @@ let prevNetRx = 0;
 let prevNetTx = 0;
 let prevNetTime = Date.now();
 
-function calculateCpuUsage(): Promise<number> {
-  return new Promise((resolve) => {
-    const cpus1 = os.cpus();
-    setTimeout(() => {
-      const cpus2 = os.cpus();
-      let idleDiff = 0;
-      let totalDiff = 0;
+function getCgroupCpuUsageNs(): number {
+  try {
+    if (fs.existsSync('/sys/fs/cgroup/cpuacct/cpuacct.usage')) {
+      return parseInt(fs.readFileSync('/sys/fs/cgroup/cpuacct/cpuacct.usage', 'utf8').trim(), 10) || 0;
+    }
+    if (fs.existsSync('/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage')) {
+      return parseInt(fs.readFileSync('/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage', 'utf8').trim(), 10) || 0;
+    }
+    if (fs.existsSync('/sys/fs/cgroup/cpu.stat')) {
+      const content = fs.readFileSync('/sys/fs/cgroup/cpu.stat', 'utf8');
+      const match = content.match(/usage_usec\s+(\d+)/);
+      if (match) return parseInt(match[1], 10) * 1000;
+    }
+  } catch (e) {}
+  return 0;
+}
 
-      for (let i = 0; i < cpus1.length; i++) {
-        const cpu1 = cpus1[i];
-        const cpu2 = cpus2[i];
+function getContainerResourceMetrics() {
+  let isContainer = false;
+  let cpuCores = os.cpus().length;
+  let totalMemBytes = os.totalmem();
+  let freeMemBytes = os.freemem();
+  let usedMemBytes = totalMemBytes - freeMemBytes;
 
-        const idle1 = cpu1.times.idle;
-        const idle2 = cpu2.times.idle;
-
-        const total1 = Object.values(cpu1.times).reduce((a, b) => a + b, 0);
-        const total2 = Object.values(cpu2.times).reduce((a, b) => a + b, 0);
-
-        idleDiff += idle2 - idle1;
-        totalDiff += total2 - total1;
+  // 1. Cgroup CPU Cores Quota
+  try {
+    if (fs.existsSync('/sys/fs/cgroup/cpu/cpu.cfs_quota_us') && fs.existsSync('/sys/fs/cgroup/cpu/cpu.cfs_period_us')) {
+      const quota = parseInt(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf8').trim(), 10);
+      const period = parseInt(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf8').trim(), 10);
+      if (quota > 0 && period > 0) {
+        cpuCores = Math.round((quota / period) * 10) / 10;
+        isContainer = true;
       }
+    } else if (fs.existsSync('/sys/fs/cgroup/cpu.max')) {
+      const parts = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+      if (parts.length >= 2 && parts[0] !== 'max') {
+        const quota = parseInt(parts[0], 10);
+        const period = parseInt(parts[1], 10);
+        if (quota > 0 && period > 0) {
+          cpuCores = Math.round((quota / period) * 10) / 10;
+          isContainer = true;
+        }
+      }
+    }
+  } catch (e) {}
 
-      const percent = totalDiff > 0 ? 100 - Math.floor((100 * idleDiff) / totalDiff) : 0;
-      resolve(Math.max(0, Math.min(100, percent)));
-    }, 200);
+  // 2. Cgroup Memory Limits & Usage
+  try {
+    let limitBytes = 0;
+    let usageBytes = 0;
+
+    if (fs.existsSync('/sys/fs/cgroup/memory/memory.limit_in_bytes')) {
+      limitBytes = parseInt(fs.readFileSync('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'utf8').trim(), 10);
+    } else if (fs.existsSync('/sys/fs/cgroup/memory.max')) {
+      const val = fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim();
+      if (val !== 'max') limitBytes = parseInt(val, 10);
+    }
+
+    if (fs.existsSync('/sys/fs/cgroup/memory/memory.usage_in_bytes')) {
+      usageBytes = parseInt(fs.readFileSync('/sys/fs/cgroup/memory/memory.usage_in_bytes', 'utf8').trim(), 10);
+    } else if (fs.existsSync('/sys/fs/cgroup/memory.current')) {
+      usageBytes = parseInt(fs.readFileSync('/sys/fs/cgroup/memory.current', 'utf8').trim(), 10);
+    }
+
+    if (limitBytes > 0 && limitBytes < 1000 * 1024 * 1024 * 1024) {
+      totalMemBytes = limitBytes;
+      isContainer = true;
+    }
+    if (usageBytes > 0) {
+      usedMemBytes = usageBytes;
+      isContainer = true;
+    }
+  } catch (e) {}
+
+  const ramTotalMB = Math.round(totalMemBytes / (1024 * 1024));
+  const ramUsedMB = Math.round(usedMemBytes / (1024 * 1024));
+  const ramFreeMB = Math.max(0, ramTotalMB - ramUsedMB);
+  const ramPercent = Math.min(100, Math.round((ramUsedMB / (ramTotalMB || 1)) * 100));
+
+  return { isContainer, cpuCores, ramTotalMB, ramUsedMB, ramFreeMB, ramPercent };
+}
+
+function calculateCpuUsage(cores: number): Promise<number> {
+  return new Promise((resolve) => {
+    const ns1 = getCgroupCpuUsageNs();
+    const t1 = process.hrtime.bigint();
+
+    if (ns1 > 0) {
+      setTimeout(() => {
+        const ns2 = getCgroupCpuUsageNs();
+        const t2 = process.hrtime.bigint();
+        const timeDiffNs = Number(t2 - t1);
+        const cpuDiffNs = ns2 - ns1;
+        if (timeDiffNs > 0 && cpuDiffNs >= 0) {
+          const pct = (cpuDiffNs / (timeDiffNs * (cores || 1))) * 100;
+          resolve(Math.max(0, Math.min(100, Math.round(pct * 10) / 10)));
+        } else {
+          resolve(0);
+        }
+      }, 200);
+    } else {
+      const cpus1 = os.cpus();
+      setTimeout(() => {
+        const cpus2 = os.cpus();
+        let idleDiff = 0;
+        let totalDiff = 0;
+
+        for (let i = 0; i < cpus1.length; i++) {
+          const cpu1 = cpus1[i];
+          const cpu2 = cpus2[i];
+
+          const idle1 = cpu1.times.idle;
+          const idle2 = cpu2.times.idle;
+
+          const total1 = Object.values(cpu1.times).reduce((a, b) => a + b, 0);
+          const total2 = Object.values(cpu2.times).reduce((a, b) => a + b, 0);
+
+          idleDiff += idle2 - idle1;
+          totalDiff += total2 - total1;
+        }
+
+        const percent = totalDiff > 0 ? 100 - Math.floor((100 * idleDiff) / totalDiff) : 0;
+        resolve(Math.max(0, Math.min(100, percent)));
+      }, 200);
+    }
   });
 }
 
 app.get('/api/metrics/live', async (req: Request, res: Response) => {
   try {
-    const cpuPercent = await calculateCpuUsage();
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
-    const ramPercent = Math.round((usedMem / totalMem) * 100);
+    const containerRes = getContainerResourceMetrics();
+    const cpuPercent = await calculateCpuUsage(containerRes.cpuCores);
 
     let diskTotalGB = 100;
-    let diskUsedGB = 35;
-    let diskFreeGB = 65;
-    let diskPercent = 35;
+    let diskUsedGB = 0.3;
+    let diskFreeGB = 99.7;
+    let diskUsedMB = 320;
+    let diskPercent = 0.3;
 
     try {
-      const { stdout } = await execAsync("df -k / | tail -n 1");
-      const parts = stdout.trim().split(/\s+/);
-      if (parts.length >= 5) {
+      let dfStr = '';
+      try {
+        const { stdout } = await execAsync("df -k . | tail -n 1");
+        dfStr = stdout;
+      } catch {
+        const { stdout } = await execAsync("df -k / | tail -n 1");
+        dfStr = stdout;
+      }
+      const parts = dfStr.trim().split(/\s+/);
+      if (parts.length >= 4) {
         const totalK = parseInt(parts[1], 10);
         const usedK = parseInt(parts[2], 10);
         const freeK = parseInt(parts[3], 10);
@@ -241,7 +346,9 @@ app.get('/api/metrics/live', async (req: Request, res: Response) => {
           diskTotalGB = Math.round((totalK / (1024 * 1024)) * 10) / 10;
           diskUsedGB = Math.round((usedK / (1024 * 1024)) * 10) / 10;
           diskFreeGB = Math.round((freeK / (1024 * 1024)) * 10) / 10;
-          diskPercent = parseInt(parts[4].replace('%', ''), 10) || Math.round((diskUsedGB / diskTotalGB) * 100);
+          diskUsedMB = Math.round(usedK / 1024);
+          const rawPct = (usedK / totalK) * 100;
+          diskPercent = Math.max(0.1, Math.round(rawPct * 10) / 10);
         }
       }
     } catch {
@@ -274,22 +381,25 @@ app.get('/api/metrics/live', async (req: Request, res: Response) => {
     const snapshot = {
       timestamp: now,
       cpuPercent,
-      cpuCores: os.cpus().length,
-      cpuModel: os.cpus()[0]?.model || 'Generic Linux CPU',
-      ramTotalMB: Math.round(totalMem / (1024 * 1024)),
-      ramUsedMB: Math.round(usedMem / (1024 * 1024)),
-      ramFreeMB: Math.round(freeMem / (1024 * 1024)),
-      ramPercent,
+      cpuCores: containerRes.cpuCores,
+      cpuModel: containerRes.isContainer ? `Container (${containerRes.cpuCores} Cores)` : (os.cpus()[0]?.model || 'Generic Linux CPU'),
+      ramTotalMB: containerRes.ramTotalMB,
+      ramUsedMB: containerRes.ramUsedMB,
+      ramFreeMB: containerRes.ramFreeMB,
+      ramPercent: containerRes.ramPercent,
       diskTotalGB,
       diskUsedGB,
       diskFreeGB,
+      diskUsedMB,
       diskPercent,
       netRxKbps,
       netTxKbps,
       uptimeSeconds: Math.floor(os.uptime()),
       platform: `${os.type()} ${os.release()} (${os.arch()})`,
       hostname: os.hostname(),
-      loadAvg: os.loadavg().map(n => Math.round(n * 100) / 100)
+      loadAvg: os.loadavg().map(n => Math.round(n * 100) / 100),
+      isContainer: containerRes.isContainer,
+      containerInfo: containerRes.isContainer ? `منابع کانتینر (سهمیه: ${containerRes.cpuCores} هسته پردازنده، ${Math.round(containerRes.ramTotalMB / 1024 * 10) / 10} گیگابایت رم)` : undefined
     };
 
     metricsHistory.push(snapshot);
@@ -316,6 +426,7 @@ interface BackgroundTask {
   completedAt?: string;
   exitCode?: number | null;
   logs: string[];
+  useVpn?: boolean;
 }
 
 const CWD_FILE = path.join(process.cwd(), '.terminal_cwd');
@@ -1505,6 +1616,9 @@ app.post('/api/processes/run-background', tempUpload.any(), async (req: Request,
 
     finalCommand = autoDetectCommand(finalCommand, workDir, logs);
 
+    const useVpnParam = req.body.useVpn;
+    const useVpn = useVpnParam === 'false' || useVpnParam === false ? false : true;
+
     const taskData: BackgroundTask = {
       id,
       name: name || path.basename(workDir) || finalCommand.substring(0, 30),
@@ -1512,7 +1626,8 @@ app.post('/api/processes/run-background', tempUpload.any(), async (req: Request,
       cwd: workDir,
       status: 'running',
       startedAt: new Date().toISOString(),
-      logs
+      logs,
+      useVpn
     };
 
     // 2. Install requirements if checked or needed
@@ -1532,8 +1647,8 @@ app.post('/api/processes/run-background', tempUpload.any(), async (req: Request,
     }
 
     // 3. Launch process
-    logs.push(`[${new Date().toLocaleTimeString()}] Launching command: ${finalCommand} in ${workDir}\n`);
-    const wrapped = await getVpnWrappedCommand(finalCommand);
+    logs.push(`[${new Date().toLocaleTimeString()}] Launching command: ${finalCommand} in ${workDir} (VPN Proxy: ${useVpn ? 'Enabled' : 'Disabled'})\n`);
+    const wrapped = await getVpnWrappedCommand(finalCommand, taskData.useVpn);
     const child = spawn('sh', ['-c', wrapped.command], {
       cwd: workDir,
       env: wrapped.env,
@@ -1675,7 +1790,7 @@ app.post('/api/processes/restart', async (req: Request, res: Response) => {
   taskData.logs.push(`[${new Date().toLocaleTimeString()}] 🚀 Restarting command: ${taskData.command}\n`);
 
   try {
-    const wrapped = await getVpnWrappedCommand(taskData.command);
+    const wrapped = await getVpnWrappedCommand(taskData.command, taskData.useVpn !== false);
     const child = spawn('sh', ['-c', wrapped.command], {
       cwd: taskData.cwd,
       env: wrapped.env,
@@ -1782,11 +1897,15 @@ app.post('/api/processes/update', upload.any(), async (req: Request, res: Respon
       }
     }
 
+    if (req.body.useVpn !== undefined) {
+      taskData.useVpn = req.body.useVpn === 'true' || req.body.useVpn === true;
+    }
+
     taskData.status = 'running';
     taskData.startedAt = new Date().toISOString();
-    taskData.logs.push(`[${new Date().toLocaleTimeString()}] Restarting updated process with command: ${taskData.command}\n`);
+    taskData.logs.push(`[${new Date().toLocaleTimeString()}] Restarting updated process with command: ${taskData.command} (VPN Proxy: ${taskData.useVpn !== false ? 'Enabled' : 'Disabled'})\n`);
 
-    const wrapped = await getVpnWrappedCommand(taskData.command);
+    const wrapped = await getVpnWrappedCommand(taskData.command, taskData.useVpn !== false);
     const child = spawn('sh', ['-c', wrapped.command], {
       cwd: workDir,
       env: wrapped.env,
@@ -2108,12 +2227,16 @@ async function runVpnCli(cmd: string, args: string[] = []): Promise<any> {
   return JSON.parse(stdout.trim());
 }
 
-async function getVpnWrappedCommand(command: string): Promise<{ command: string; env: Record<string, string> }> {
+async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Promise<{ command: string; env: Record<string, string> }> {
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     PYTHONUNBUFFERED: '1',
     PATH: (process.env.PATH || '') + ':/usr/local/bin:/usr/bin:/bin'
   };
+
+  if (!useVpn) {
+    return { command, env };
+  }
 
   let vpnRunning = false;
   try {

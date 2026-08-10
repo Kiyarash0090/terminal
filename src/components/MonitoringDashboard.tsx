@@ -56,6 +56,15 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
     return `${hours}h ${mins}m`;
   };
 
+  const diskInfo = (() => {
+    if (!metrics) return { usedText: '0 MB', totalText: '0 GB', percentText: '0%' };
+    const usedMB = metrics.diskUsedMB ?? Math.round(metrics.diskUsedGB * 1024);
+    const usedText = usedMB < 1024 ? `${usedMB} MB` : `${metrics.diskUsedGB} GB`;
+    const totalText = `${metrics.diskTotalGB} GB`;
+    const percentText = metrics.diskPercent > 0 && metrics.diskPercent < 1 ? `${metrics.diskPercent.toFixed(1)}%` : `${metrics.diskPercent}%`;
+    return { usedText, totalText, percentText };
+  })();
+
   const chartData = history.map((m, i) => ({
     time: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     cpu: m.cpuPercent,
@@ -87,12 +96,24 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
             </h2>
           </div>
           {metrics && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10 text-[11px] font-mono text-neutral-600 dark:text-neutral-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span>{metrics.hostname}</span>
-              <span className="opacity-40">&bull;</span>
-              <span>{metrics.platform}</span>
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10 text-[11px] font-mono text-neutral-600 dark:text-neutral-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span>{metrics.hostname}</span>
+                <span className="opacity-40">&bull;</span>
+                <span>{metrics.platform}</span>
+              </span>
+              {metrics.isContainer && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-[11px] font-sans text-blue-600 dark:text-blue-400 font-medium">
+                  <Server className="h-3 w-3 shrink-0 text-blue-500" />
+                  <span>
+                    {lang === 'fa'
+                      ? `منابع کانتینر (${metrics.cpuCores} هسته • ${(metrics.ramTotalMB / 1024).toFixed(1)}GB رم)`
+                      : `Container Environment (${metrics.cpuCores} Cores • ${(metrics.ramTotalMB / 1024).toFixed(1)}GB RAM)`}
+                  </span>
+                </span>
+              )}
+            </div>
           )}
         </div>
 
@@ -172,7 +193,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
             </div>
             <div className="min-w-0">
               <div className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 truncate">{t.diskUsage}</div>
-              <div className="text-[10px] text-neutral-500 font-mono truncate">{metrics?.diskUsedGB} / {metrics?.diskTotalGB} GB</div>
+              <div className="text-[10px] text-neutral-500 font-mono truncate">{diskInfo.usedText} / {diskInfo.totalText}</div>
             </div>
           </div>
           <div className="flex items-center gap-2.5 shrink-0">
@@ -180,7 +201,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
               <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${metrics?.diskPercent || 0}%` }} />
             </div>
             <span className="text-sm font-extrabold font-mono text-neutral-900 dark:text-white w-10 text-left">
-              {metrics?.diskPercent}%
+              {diskInfo.percentText}
             </span>
           </div>
         </div>
@@ -268,10 +289,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-extrabold font-mono text-neutral-900 dark:text-white">
-              {metrics?.diskPercent}%
+              {diskInfo.percentText}
             </span>
             <span className="text-xs text-neutral-500 font-mono">
-              ({metrics?.diskUsedGB} GB / {metrics?.diskTotalGB} GB)
+              ({diskInfo.usedText} / {diskInfo.totalText})
             </span>
           </div>
           <div className="w-full bg-neutral-200 dark:bg-white/5 h-1.5 rounded-full mt-3 overflow-hidden">

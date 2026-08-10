@@ -25,6 +25,7 @@ export interface SystemMetrics {
   diskTotalGB: number;
   diskUsedGB: number;
   diskFreeGB: number;
+  diskUsedMB?: number;
   diskPercent: number;
   netRxKbps: number;
   netTxKbps: number;
@@ -32,6 +33,8 @@ export interface SystemMetrics {
   platform: string;
   hostname: string;
   loadAvg: number[];
+  isContainer?: boolean;
+  containerInfo?: string;
 }
 
 export interface FileItem {
@@ -55,6 +58,7 @@ export interface BackgroundTask {
   completedAt?: string;
   exitCode?: number | null;
   logs: string[];
+  useVpn?: boolean;
 }
 
 export interface SystemProcess {

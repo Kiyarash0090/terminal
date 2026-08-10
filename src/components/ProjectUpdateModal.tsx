@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, File, Folder, X, Check, ArrowRight, Github, RefreshCw } from 'lucide-react';
+import { UploadCloud, File, Folder, X, Check, ArrowRight, Github, RefreshCw, Shield } from 'lucide-react';
 import { Language, BackgroundTask } from '../types';
 import { translations } from '../locales/translations';
 
@@ -30,6 +30,7 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
   const [githubUrl, setGithubUrl] = useState('');
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [installReqs, setInstallReqs] = useState(true);
+  const [useVpn, setUseVpn] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -43,6 +44,7 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
       setStagedFiles([]);
       setUploadProgress('');
       setInstallReqs(true);
+      setUseVpn(task?.useVpn !== false);
     }
   }, [isOpen]);
 
@@ -146,6 +148,7 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
       formData.append('id', task.id);
       formData.append('sourceType', sourceType);
       formData.append('installRequirements', installReqs.toString());
+      formData.append('useVpn', useVpn.toString());
 
       if (sourceType === 'files') {
         const filePaths: string[] = [];
@@ -393,17 +396,37 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
           )}
 
           {/* Install requirements checkbox */}
-          <div className="flex items-center gap-2 pt-1 bg-[#161b22]/40 p-3 rounded-xl border border-neutral-800/60">
-            <input
-              type="checkbox"
-              id="update-install-requirements"
-              checked={installReqs}
-              onChange={(e) => setInstallReqs(e.target.checked)}
-              className="w-4 h-4 rounded text-indigo-600 border-neutral-700 bg-neutral-900 focus:ring-indigo-500 cursor-pointer"
-            />
-            <label htmlFor="update-install-requirements" className="text-xs font-semibold text-neutral-300 cursor-pointer select-none">
-              {lang === 'fa' ? 'نصب خودکار کتابخانه‌ها و وابستگی‌ها (pip install -r requirements.txt)' : 'Automatically install/update requirements.txt libraries'}
-            </label>
+          <div className="space-y-2 bg-[#161b22]/40 p-3 rounded-xl border border-neutral-800/60">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="update-install-requirements"
+                checked={installReqs}
+                onChange={(e) => setInstallReqs(e.target.checked)}
+                className="w-4 h-4 rounded text-indigo-600 border-neutral-700 bg-neutral-900 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="update-install-requirements" className="text-xs font-semibold text-neutral-300 cursor-pointer select-none">
+                {lang === 'fa' ? 'نصب خودکار کتابخانه‌ها و وابستگی‌ها (pip install -r requirements.txt)' : 'Automatically install/update requirements.txt libraries'}
+              </label>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1 border-t border-neutral-800/50">
+              <input
+                type="checkbox"
+                id="update-use-vpn"
+                checked={useVpn}
+                onChange={(e) => setUseVpn(e.target.checked)}
+                className="w-4 h-4 rounded text-indigo-600 border-neutral-700 bg-neutral-900 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="update-use-vpn" className="text-xs font-semibold text-neutral-300 cursor-pointer select-none flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-blue-400" />
+                <span>
+                  {lang === 'fa'
+                    ? 'استفاده از پروکسی VPN (127.0.0.1:10808) در صورت روشن بودن VPN'
+                    : 'Route traffic via VPN proxy (127.0.0.1:10808) when active'}
+                </span>
+              </label>
+            </div>
           </div>
 
         </div>

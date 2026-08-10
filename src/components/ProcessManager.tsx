@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2, Boxes } from 'lucide-react';
+import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2, Boxes, Shield } from 'lucide-react';
 import { BackgroundTask, SystemProcess, Language } from '../types';
 import { translations } from '../locales/translations';
 import { GithubUploadDeployModal } from './GithubUploadDeployModal';
@@ -401,6 +401,21 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
                           PID: {task.pid}
                         </span>
                       )}
+                      <span
+                        className={`inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                          task.useVpn !== false
+                            ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                            : 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20'
+                        }`}
+                        title={
+                          task.useVpn !== false
+                            ? (lang === 'fa' ? 'پروکسی VPN (127.0.0.1:10808) فعال است' : 'VPN Proxy (127.0.0.1:10808) Enabled')
+                            : (lang === 'fa' ? 'پروکسی VPN غیرفعال است (اتصال مستقیم)' : 'VPN Proxy Disabled (Direct)')
+                        }
+                      >
+                        <Shield className="h-2.5 w-2.5" />
+                        <span>{task.useVpn !== false ? 'VPN Proxy' : 'Direct'}</span>
+                      </span>
                     </div>
                     <p className="text-[10px] sm:text-[11px] font-mono text-neutral-500 dark:text-neutral-400 truncate mt-0.5 sm:mt-1 dir-ltr text-right">
                       {task.command}
