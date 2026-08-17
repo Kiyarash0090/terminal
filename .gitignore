@@ -1,0 +1,35 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Runtime credentials & server state
+.serverdash_config.json
+.terminal_cwd
+telegram_bot/config.json
+!telegram_bot/config.json.example
+telegram_bot/vpn_active.json
+telegram_bot/vpn_configs/
+telegram_bot/bin/
+
+# Private session & database files
+*.session
+*.db
+*.sqlite
+cookies.txt
+
+# Python cache & venv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# User apps & uploads
+myserverapp/
+123/
+user_files/
