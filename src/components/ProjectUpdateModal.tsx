@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, File, Folder, X, Check, ArrowRight, Github, RefreshCw, Shield } from 'lucide-react';
+import { UploadCloud, File, Folder, X, Check, ArrowRight, Github, RefreshCw, Shield, RotateCcw } from 'lucide-react';
 import { Language, BackgroundTask } from '../types';
 import { translations } from '../locales/translations';
 
@@ -31,6 +31,7 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [installReqs, setInstallReqs] = useState(true);
   const [useVpn, setUseVpn] = useState(true);
+  const [autoRestartOnCrash, setAutoRestartOnCrash] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -45,8 +46,9 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
       setUploadProgress('');
       setInstallReqs(true);
       setUseVpn(task?.useVpn !== false);
+      setAutoRestartOnCrash(task?.autoRestartOnCrash !== false);
     }
-  }, [isOpen]);
+  }, [isOpen, task]);
 
   if (!isOpen || !task) return null;
 
@@ -149,6 +151,7 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
       formData.append('sourceType', sourceType);
       formData.append('installRequirements', installReqs.toString());
       formData.append('useVpn', useVpn.toString());
+      formData.append('autoRestartOnCrash', autoRestartOnCrash.toString());
 
       if (sourceType === 'files') {
         const filePaths: string[] = [];
@@ -424,6 +427,31 @@ export const ProjectUpdateModal: React.FC<ProjectUpdateModalProps> = ({
                   {lang === 'fa'
                     ? 'استفاده از پروکسی VPN (127.0.0.1:10808) در صورت روشن بودن VPN'
                     : 'Route traffic via VPN proxy (127.0.0.1:10808) when active'}
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-start gap-2 pt-1.5 border-t border-neutral-800/50">
+              <input
+                type="checkbox"
+                id="update-auto-restart"
+                checked={autoRestartOnCrash}
+                onChange={(e) => setAutoRestartOnCrash(e.target.checked)}
+                className="w-4 h-4 rounded text-indigo-600 border-neutral-700 bg-neutral-900 focus:ring-indigo-500 cursor-pointer mt-0.5"
+              />
+              <label htmlFor="update-auto-restart" className="text-xs font-semibold text-neutral-300 cursor-pointer select-none flex flex-col">
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>
+                    {lang === 'fa'
+                      ? 'راه‌اندازی مجدد خودکار در صورت کرش برنامه (Auto-Restart on Crash)'
+                      : 'Auto-restart application on crash'}
+                  </span>
+                </span>
+                <span className="text-[11px] text-neutral-400 font-normal mt-0.5">
+                  {lang === 'fa'
+                    ? 'در صورت توقف دستی توسط شما، برنامه دوباره راه اندازی نخواهد شد.'
+                    : 'If manually stopped by you, the app will not auto-restart.'}
                 </span>
               </label>
             </div>

@@ -223,33 +223,161 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
-# Info/Metrics command
-@admin_only
-async def show_system_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Retrieve system stats using psutil
-    cpu_percent = psutil.cpu_percent(interval=0.5)
-    ram = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
+# Helper functions for human readable sizes and metrics formatting
+def format_bytes_human(bytes_val: float) -> str:
+    """تبدیل بایت به فرمت استاندارد و خوانا (B, KB, MB, GB, TB)"""
+    if bytes_val is None or bytes_val < 0:
+        return "0 B"
+    if bytes_val < 1024:
+        return f"{bytes_val:.0f} B"
+    elif bytes_val < 1024 * 1024:
+        return f"{bytes_val / 1024:.1f} KB"
+    elif bytes_val < 1024 * 1024 * 1024:
+        return f"{bytes_val / (1024 * 1024):.1f} MB"
+    elif bytes_val < 1024 * 1024 * 1024 * 1024:
+        return f"{bytes_val / (1024 * 1024 * 1024):.2f} GB"
+    else:
+        return f"{bytes_val / (1024 * 1024 * 1024 * 1024):.2f} TB"
+
+def format_mb_human(mb_val: float) -> str:
+    """تبدیل هوشمند مگابایت به MB یا GB"""
+    if mb_val is None or mb_val < 0:
+        return "0 MB"
+    if mb_val < 1024:
+        return f"{mb_val:.1f} MB" if isinstance(mb_val, float) and mb_val % 1 != 0 else f"{int(mb_val)} MB"
+    else:
+        gb_val = mb_val / 1024.0
+        return f"{gb_val:.2f} GB"
+
+def format_gb_human(gb_val: float) -> str:
+    """تبدیل گیگابایت (اگر زیر ۱ گیگ باشد به مگابایت و اگر بالا باشد به GB یا TB)"""
+    if gb_val is None or gb_val < 0:
+        return "0 MB"
+    if gb_val < 1.0:
+        mb_val = gb_val * 1024.0
+        return f"{mb_val:.1f} MB" if mb_val % 1 != 0 else f"{int(mb_val)} MB"
+    elif gb_val < 1024.0:
+        return f"{gb_val:.2f} GB" if gb_val % 1 != 0 else f"{int(gb_val)} GB"
+    else:
+        tb_val = gb_val / 1024.0
+        return f"{tb_val:.2f} TB"
+
+def make_progress_bar(percent: float, length: int = 10) -> str:
+    """ایجاد نوار پیشرفت بصری منسجم"""
+    p = max(0.0, min(100.0, float(percent or 0)))
+    filled = int(round((p / 100.0) * length))
+    filled = max(0, min(length, filled))
+    empty = length - filled
+    return "█" * filled + "░" * empty
+
+def format_uptime_human(seconds: int) -> str:
+    """تبدیل زمان به فرمت فارسی خوانا (روز، ساعت، دقیقه، ثانیه)"""
+    if not seconds or seconds < 0:
+        return "0 ثانیه"
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
     
-    uptime_sec = int(psutil.boot_time())
-    import datetime
-    uptime_str = str(datetime.timedelta(seconds=int(asyncio.get_event_loop().time())))
-    
-    # Network metrics
-    net_io = psutil.net_io_counters()
-    sent_mb = net_io.bytes_sent / (1024 * 1024)
-    recv_mb = net_io.bytes_recv / (1024 * 1024)
+    parts = []
+    if days > 0:
+        parts.append(f"{days} روز")
+    if hours > 0:
+        parts.append(f"{hours} ساعت")
+    if minutes > 0:
+        parts.append(f"{minutes} دقیقه")
+    if secs > 0 or not parts:
+        parts.append(f"{secs} ثانیه")
+    return " و ".join(parts)
+
+async def build_system_metrics_display():
+    # Try fetching live metrics from Express server first
+    res = await express_api("GET", "/api/metrics/live")
+    if res and "current" in res:
+        m = res["current"]
+        cpu_pct = float(m.get("cpuPercent", 0.0))
+        cpu_cores = m.get("cpuCores", 1)
+        cpu_model = m.get("cpuModel", "Linux CPU")
+        
+        ram_pct = float(m.get("ramPercent", 0.0))
+        ram_used_mb = float(m.get("ramUsedMB", 0))
+        ram_total_mb = float(m.get("ramTotalMB", 1024))
+        ram_free_mb = float(m.get("ramFreeMB", max(0, ram_total_mb - ram_used_mb)))
+
+        disk_pct = float(m.get("diskPercent", 0.0))
+        disk_used_gb = float(m.get("diskUsedGB", 0.0))
+        disk_total_gb = float(m.get("diskTotalGB", 100.0))
+        disk_free_gb = float(m.get("diskFreeGB", max(0.0, disk_total_gb - disk_used_gb)))
+
+        uptime_sec = int(m.get("uptimeSeconds", 0))
+        
+        net_io = psutil.net_io_counters()
+        net_tx_bytes = net_io.bytes_sent
+        net_rx_bytes = net_io.bytes_recv
+    else:
+        # Fallback to local psutil
+        cpu_pct = float(psutil.cpu_percent(interval=0.3))
+        cpu_cores = os.cpu_count() or 1
+        cpu_model = "Linux Server CPU"
+        
+        ram = psutil.virtual_memory()
+        ram_pct = float(ram.percent)
+        ram_used_mb = ram.used / (1024 * 1024)
+        ram_total_mb = ram.total / (1024 * 1024)
+        ram_free_mb = ram.available / (1024 * 1024)
+
+        disk = psutil.disk_usage('/')
+        disk_pct = float(disk.percent)
+        disk_used_gb = disk.used / (1024 ** 3)
+        disk_total_gb = disk.total / (1024 ** 3)
+        disk_free_gb = disk.free / (1024 ** 3)
+
+        try:
+            boot_t = int(psutil.boot_time())
+            import time
+            uptime_sec = max(0, int(time.time() - boot_t))
+        except:
+            uptime_sec = 0
+
+        net_io = psutil.net_io_counters()
+        net_tx_bytes = net_io.bytes_sent
+        net_rx_bytes = net_io.bytes_recv
+
+    now_str = datetime.now().strftime("%H:%M:%S")
 
     metrics_text = (
-        "📊 *آخرین وضعیت سخت‌افزار سرور:*\n\n"
-        f"💻 *مصرف پردازنده (CPU):* `{cpu_percent}%`\n"
-        f"💾 *مصرف حافظه (RAM):* `{ram.percent}%` `({ram.used // (1024*1024)}MB / {ram.total // (1024*1024)}MB)`\n"
-        f"💽 *فضای دیسک (Disk):* `{disk.percent}%` `({disk.used // (1024**3)}GB / {disk.total // (1024**3)}GB)`\n\n"
-        f"📤 *ارسال شبکه:* `{sent_mb:.2f} MB`\n"
-        f"📥 *دریافت شبکه:* `{recv_mb:.2f} MB`\n\n"
-        f"⏱️ *مدت زمان فعالیت ربات:* `{uptime_str}`"
+        "📊 *آخرین وضعیت سخت‌افزار و منابع سرور:*\n"
+        f"⏱️ *زمان استعلام:* `{now_str}`\n\n"
+        f"💻 *پردازنده (CPU):* `{cpu_pct:.1f}%` `[{make_progress_bar(cpu_pct)}]`\n"
+        f"└ *هسته‌ها:* `{cpu_cores} Cores` | `{cpu_model}`\n\n"
+        f"💾 *حافظه اصلی (RAM):* `{ram_pct:.1f}%` `[{make_progress_bar(ram_pct)}]`\n"
+        f"└ *مصرفی:* `{format_mb_human(ram_used_mb)}` از `{format_mb_human(ram_total_mb)}` (`آزاد: {format_mb_human(ram_free_mb)}`)\n\n"
+        f"💽 *فضای ذخیره‌سازی (Disk):* `{disk_pct:.1f}%` `[{make_progress_bar(disk_pct)}]`\n"
+        f"└ *مصرفی:* `{format_gb_human(disk_used_gb)}` از `{format_gb_human(disk_total_gb)}` (`آزاد: {format_gb_human(disk_free_gb)}`)\n\n"
+        f"🌐 *ترافیک شبکه:* \n"
+        f"├ 📤 *ارسال (Sent):* `{format_bytes_human(net_tx_bytes)}` \n"
+        f"└ 📥 *دریافت (Recv):* `{format_bytes_human(net_rx_bytes)}` \n\n"
+        f"⏱️ *مدت زمان فعالیت (Uptime):*\n"
+        f"└ `{format_uptime_human(uptime_sec)}`"
     )
-    await update.effective_message.reply_text(metrics_text, parse_mode="Markdown")
+
+    keyboard = [
+        [InlineKeyboardButton("🔄 بروزرسانی وضعیت زنده", callback_data="sys_metrics_refresh")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    return metrics_text, reply_markup
+
+# Info/Metrics command
+@admin_only
+async def show_system_metrics(update: Update, context: ContextTypes.DEFAULT_TYPE, message_to_edit=None):
+    text, reply_markup = await build_system_metrics_display()
+    if message_to_edit:
+        try:
+            await message_to_edit.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+        except Exception:
+            pass
+    else:
+        await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 # Terminal Mode Handlers
 @admin_only
@@ -986,6 +1114,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Handle Terminal Mode command execution
     if mode == "terminal" and text:
+        # First check if an active running process is waiting for input
+        input_res = await express_api("POST", "/api/terminal/input", {"input": text})
+        if input_res and input_res.get("success"):
+            proc_id = input_res.get("processId")
+            await update.message.reply_text(
+                f"📥 *ورودی به برنامه در حال اجرا ارسال شد:* `{text}`\n"
+                f"جهت مشاهده پاسخ و خروجی جدید، روی دکمه بروزرسانی لاگ کلیک کنید.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 بروزرسانی لاگ آنلاین", callback_data=f"proc_logs_{proc_id}")],
+                    [InlineKeyboardButton("🔌 Ctrl + C (توقف)", callback_data=f"proc_kill_{proc_id}")]
+                ]),
+                parse_mode="Markdown"
+            )
+            return
+
         cmd_msg = await update.message.reply_text("⏳ *در حال اجرای دستور...*", parse_mode="Markdown")
         
         # Prevent running duplicate bot instances which cause 409 Conflict
@@ -1064,8 +1207,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = update.effective_chat.id
     message_id = query.message.message_id
     
-    # ------------------ TERMINAL CALLBACKS ------------------
-    if data == "term_exit":
+    # ------------------ TERMINAL & METRICS CALLBACKS ------------------
+    if data == "sys_metrics_refresh":
+        await show_system_metrics(update, context, message_to_edit=query.message)
+        return
+
+    elif data == "term_exit":
         context.user_data["mode"] = "normal"
         await query.message.edit_text("❌ از ترمینال خارج شدید. منوی اصلی فعال است.")
         return

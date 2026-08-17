@@ -6,11 +6,11 @@ import { MonitoringDashboard } from './components/MonitoringDashboard';
 import { TerminalView } from './components/TerminalView';
 import { FileManager } from './components/FileManager';
 import { ProcessManager } from './components/ProcessManager';
-import { TelegramBotManager } from './components/TelegramBotManager';
 import { VpnManager } from './components/VpnManager';
-import { DocumentationView } from './components/DocumentationView';
+import { DocumentationModal } from './components/DocumentationModal';
 import { SecurityModal } from './components/SecurityModal';
 import { LoginModal } from './components/LoginModal';
+import { TelegramBotModal } from './components/TelegramBotModal';
 
 export default function App() {
   const [lang, setLang] = useState<Language>(() => {
@@ -23,6 +23,8 @@ export default function App() {
   });
   const [activeTab, setActiveTab] = useState<ActiveTab>('monitoring');
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
+  const [isDocOpen, setIsDocOpen] = useState(false);
+  const [isTelegramBotOpen, setIsTelegramBotOpen] = useState(false);
 
   const [auth, setAuth] = useState<AuthState>(() => {
     let savedToken = localStorage.getItem('serverdash_token');
@@ -36,6 +38,32 @@ export default function App() {
       token: savedToken
     };
   });
+
+  // Global Keyboard Shortcut Listener for Documentation (Shift + ? or F1)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // F1 key or Shift + ?
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setIsDocOpen((prev) => !prev);
+      } else if (e.shiftKey && (e.key === '?' || e.key === '/')) {
+        const target = e.target as HTMLElement;
+        const isInput = target && (
+          target.tagName === 'INPUT' || 
+          target.tagName === 'TEXTAREA' || 
+          target.isContentEditable
+        );
+        // Open doc modal if user is not currently typing in a text field
+        if (!isInput) {
+          e.preventDefault();
+          setIsDocOpen(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   // Apply RTL/LTR dir attribute based on language
   useEffect(() => {
@@ -111,11 +139,14 @@ export default function App() {
       {/* Top Navbar */}
       <Navbar
         user={auth.user}
+        token={auth.token}
         lang={lang}
         theme={theme}
         onToggleLang={toggleLang}
         onToggleTheme={toggleTheme}
         onOpenSecurity={() => setIsSecurityOpen(true)}
+        onOpenDocumentation={() => setIsDocOpen(true)}
+        onOpenTelegramBot={() => setIsTelegramBotOpen(true)}
         onLogout={handleLogout}
       />
 
@@ -138,18 +169,27 @@ export default function App() {
           <div className={activeTab === 'processManager' ? '' : 'hidden'}>
             <ProcessManager token={auth.token} lang={lang} />
           </div>
-          <div className={activeTab === 'telegramBot' ? '' : 'hidden'}>
-            <TelegramBotManager token={auth.token} lang={lang} />
-          </div>
 
           <div className={activeTab === 'vpnManager' ? '' : 'hidden'}>
             <VpnManager token={auth.token} lang={lang} />
           </div>
-          <div className={activeTab === 'documentation' ? '' : 'hidden'}>
-            <DocumentationView lang={lang} />
-          </div>
         </main>
       </div>
+
+      {/* Telegram Bot Modal Dialog */}
+      <TelegramBotModal
+        isOpen={isTelegramBotOpen}
+        onClose={() => setIsTelegramBotOpen(false)}
+        token={auth.token}
+        lang={lang}
+      />
+
+      {/* Quick Documentation Modal Dialog */}
+      <DocumentationModal
+        isOpen={isDocOpen}
+        onClose={() => setIsDocOpen(false)}
+        lang={lang}
+      />
 
       {/* Login Screen Modal if not authenticated */}
       {!auth.isAuthenticated && (

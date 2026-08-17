@@ -168,12 +168,14 @@ class VPNManager:
             messages.append(msg)
         return ok_count, fail_count, messages
 
-    def delete_config(self, index: int) -> Tuple[bool, str]:
+    def delete_config(self, index: int) -> Tuple[bool, str, Optional[Dict]]:
         """حذف کانفیگ با شماره"""
         configs = self._store["configs"]
         if index < 0 or index >= len(configs):
-            return False, "❌ شماره کانفیگ معتبر نیست."
-        name = configs[index]["name"]
+            return False, "❌ شماره کانفیگ معتبر نیست.", None
+        item = configs[index]
+        name = item["name"]
+        deleted_item = {"name": name, "config": item.get("config", "")}
         configs.pop(index)
         # اصلاح active_index بعد از حذف
         ai = self._store["active_index"]
@@ -183,17 +185,20 @@ class VPNManager:
         elif ai is not None and ai > index:
             self._store["active_index"] = ai - 1
         self._save_store()
-        return True, f"✅ کانفیگ «{name}» حذف شد."
+        return True, f"✅ کانفیگ «{name}» حذف شد.", deleted_item
 
-    def delete_configs_bulk(self, indices: List[int]) -> Tuple[int, str]:
+    def delete_configs_bulk(self, indices: List[int]) -> Tuple[int, str, List[Dict]]:
         """حذف گروهی کانفیگ‌ها با لیست نمایه‌ها"""
         configs = self._store["configs"]
         sorted_indices = sorted(set(indices), reverse=True)
         deleted_count = 0
+        deleted_items = []
         ai = self._store.get("active_index")
 
         for idx in sorted_indices:
             if 0 <= idx < len(configs):
+                item = configs[idx]
+                deleted_items.append({"name": item.get("name", ""), "config": item.get("config", "")})
                 configs.pop(idx)
                 deleted_count += 1
                 if ai == idx:
@@ -206,7 +211,7 @@ class VPNManager:
             self._store["enabled"] = False
 
         self._save_store()
-        return deleted_count, f"✅ تعداد {deleted_count} کانفیگ با موفقیت حذف شد."
+        return deleted_count, f"✅ تعداد {deleted_count} کانفیگ با موفقیت حذف شد.", deleted_items
 
     def list_configs(self) -> List[Dict]:
         return self._store["configs"]

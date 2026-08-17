@@ -59,6 +59,9 @@ export interface BackgroundTask {
   exitCode?: number | null;
   logs: string[];
   useVpn?: boolean;
+  autoRestartOnCrash?: boolean;
+  crashCount?: number;
+  recentCrashTimestamps?: number[];
 }
 
 export interface SystemProcess {
@@ -90,6 +93,19 @@ export interface TerminalHistoryItem {
   timestamp: string;
   exitCode?: number;
   isRunning?: boolean;
+}
+
+export interface TerminalTab {
+  id: string;
+  title: string;
+  cwd: string;
+  history: TerminalHistoryItem[];
+  command: string;
+  isExecuting: boolean;
+  currentProcessId: string | null;
+  executedCommandsList: string[];
+  commandHistoryIndex: number;
+  autoScroll: boolean;
 }
 
 export interface TelegramBotConfig {

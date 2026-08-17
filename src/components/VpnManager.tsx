@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Globe, Power, RefreshCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X } from 'lucide-react';
 import { Language } from '../types';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { UndoToast } from './UndoToast';
 
 const PING_CACHE_KEY = 'vpn_ping_test_results';
 
@@ -92,6 +94,17 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
   const [ipData, setIpData] = useState<{ direct: IpInfo | null; vpn: IpInfo | null; proxyActive: boolean } | null>(null);
   const [checkingIp, setCheckingIp] = useState(false);
   const [copiedProxy, setCopiedProxy] = useState(false);
+  // Delete Modal state
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    type: 'single' | 'bulk' | null;
+    index?: number;
+    indices?: number[];
+    configName?: string;
+    count?: number;
+  }>({ isOpen: false, type: null });
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [undoToast, setUndoToast] = useState<{ id: string; trashId: string; message: string } | null>(null);
 
   const fetchStatus = async () => {
     if (!token) return;
@@ -252,64 +265,106 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedIndices.length === 0) return;
-    const confirmMsg = isFa
-      ? `آیا از حذف ${selectedIndices.length} کانفیگ انتخاب شده اطمینان دارید؟`
-      : `Are you sure you want to delete ${selectedIndices.length} selected configs?`;
-    if (!confirm(confirmMsg)) return;
+    setDeleteModal({
+      isOpen: true,
+      type: 'bulk',
+      indices: selectedIndices,
+      count: selectedIndices.length
+    });
+  };
 
+  const handleDeleteConfig = (index: number) => {
+    const configItem = configs.find(c => c.index === index);
+    setDeleteModal({
+      isOpen: true,
+      type: 'single',
+      index,
+      configName: configItem?.name || `Config #${index + 1}`
+    });
+  };
+
+  const confirmExecuteVpnDelete = async () => {
+    if (!deleteModal.type) return;
+    setIsDeleting(true);
     try {
-      setActionLoading(true);
-      const res = await fetch('/api/vpn/configs/delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ indices: selectedIndices })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setMessage({ text: data.message || (isFa ? 'کانفیگ‌ها با موفقیت حذف شدند' : 'Configs deleted'), type: 'success' });
-        setSelectedIndices([]);
-        fetchConfigs();
-        fetchStatus();
-      } else {
-        setMessage({ text: data.error || data.message || (isFa ? 'خطا در حذف کانفیگ‌ها' : 'Error deleting configs'), type: 'error' });
+      if (deleteModal.type === 'bulk' && deleteModal.indices) {
+        const res = await fetch('/api/vpn/configs/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ indices: deleteModal.indices })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (data.trashId) {
+            setUndoToast({
+              id: data.trashId,
+              trashId: data.trashId,
+              message: isFa ? `${deleteModal.count || deleteModal.indices.length} کانفیگ VPN حذف شد` : `${deleteModal.count || deleteModal.indices.length} VPN Configs deleted`
+            });
+          } else {
+            setMessage({ text: data.message || (isFa ? 'کانفیگ‌ها با موفقیت حذف شدند' : 'Configs deleted'), type: 'success' });
+          }
+          setSelectedIndices([]);
+          fetchConfigs();
+          fetchStatus();
+        } else {
+          setMessage({ text: data.error || data.message || (isFa ? 'خطا در حذف کانفیگ‌ها' : 'Error deleting configs'), type: 'error' });
+        }
+      } else if (deleteModal.type === 'single' && deleteModal.index !== undefined) {
+        const res = await fetch('/api/vpn/configs/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ index: deleteModal.index })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (data.trashId) {
+            setUndoToast({
+              id: data.trashId,
+              trashId: data.trashId,
+              message: isFa ? `کانفیگ «${deleteModal.configName}» حذف شد` : `'${deleteModal.configName}' deleted`
+            });
+          } else {
+            setMessage({ text: data.message, type: 'success' });
+          }
+          fetchConfigs();
+          fetchStatus();
+        } else {
+          setMessage({ text: data.error || data.message, type: 'error' });
+        }
       }
     } catch (err: any) {
       setMessage({ text: err.message, type: 'error' });
     } finally {
-      setActionLoading(false);
+      setIsDeleting(false);
+      setDeleteModal({ isOpen: false, type: null });
     }
   };
 
-  const handleDeleteConfig = async (index: number) => {
-    if (!confirm(isFa ? 'آیا از حذف این کانفیگ اطمینان دارید؟' : 'Are you sure you want to delete this config?')) return;
+  const handleRestoreVpnFromUndo = async (trashId: string) => {
     try {
-      setActionLoading(true);
-      const res = await fetch('/api/vpn/configs/delete', {
+      const res = await fetch('/api/vpn/configs/restore', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ index })
+        body: JSON.stringify({ trashId })
       });
       const data = await res.json();
       if (data.success) {
-        setMessage({ text: data.message, type: 'success' });
         fetchConfigs();
         fetchStatus();
-      } else {
-        setMessage({ text: data.error || data.message, type: 'error' });
       }
-    } catch (err: any) {
-      setMessage({ text: err.message, type: 'error' });
-    } finally {
-      setActionLoading(false);
-    }
+    } catch {}
   };
 
   const handleSelectConfig = async (index: number) => {
@@ -670,84 +725,84 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
       </div>
 
       {/* Live IP & Location Checker Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4">
         {/* Direct IP */}
-        <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm space-y-2.5 sm:space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-              <MapPin className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-500" />
-              <span>{isFa ? 'IP مستقیم سرور (Direct IP)' : 'Direct Server IP'}</span>
+        <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-2.5 sm:p-5 shadow-sm space-y-1.5 sm:space-y-3 min-w-0">
+          <div className="flex items-center justify-between gap-1 min-w-0">
+            <div className="flex items-center gap-1 text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 min-w-0 flex-1">
+              <MapPin className="h-3 w-3 sm:h-4 sm:w-4 text-amber-500 shrink-0" />
+              <span className="truncate">{isFa ? 'IP مستقیم سرور (Direct IP)' : 'Direct Server IP'}</span>
             </div>
-            <span className="text-[10px] sm:text-xs font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/20">
+            <span className="text-[9px] sm:text-xs font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full border border-amber-500/20 shrink-0">
               {isFa ? 'بدون پروکسی' : 'Direct'}
             </span>
           </div>
 
           {ipData?.direct ? (
-            <div className="space-y-0.5 sm:space-y-1 font-mono text-xs sm:text-sm">
-              <div className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+            <div className="space-y-0.5 font-mono min-w-0">
+              <div className="text-xs sm:text-lg font-bold text-neutral-900 dark:text-white truncate">
                 {ipData.direct.ip || 'نامشخص'}
               </div>
-              <div className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-2">
-                <span>{ipData.direct.city}, {ipData.direct.region}, {ipData.direct.country}</span>
+              <div className="text-[9px] sm:text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                <span>{ipData.direct.city}, {ipData.direct.country}</span>
               </div>
-              <div className="text-[11px] sm:text-xs text-neutral-400 dark:text-neutral-500 truncate">
+              <div className="text-[9px] sm:text-xs text-neutral-400 dark:text-neutral-500 truncate">
                 {ipData.direct.org}
               </div>
             </div>
           ) : (
-            <div className="text-[11px] sm:text-xs text-neutral-400 py-1 sm:py-2">
-              {checkingIp ? (isFa ? 'در حال تست IP...' : 'Checking IP...') : (isFa ? 'اطلاعات در دسترس نیست' : 'No data')}
+            <div className="text-[10px] sm:text-xs text-neutral-400 py-1 truncate">
+              {checkingIp ? (isFa ? 'تست IP...' : 'Checking...') : (isFa ? 'نامشخص' : 'No data')}
             </div>
           )}
         </div>
 
         {/* VPN Proxied IP */}
-        <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm space-y-2.5 sm:space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
-              <ShieldCheck className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-500" />
-              <span>{isFa ? 'IP خروجی VPN (Proxied IP)' : 'VPN Output IP'}</span>
+        <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-2.5 sm:p-5 shadow-sm space-y-1.5 sm:space-y-3 min-w-0">
+          <div className="flex items-center justify-between gap-1 min-w-0">
+            <div className="flex items-center gap-1 text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 min-w-0 flex-1">
+              <ShieldCheck className="h-3 w-3 sm:h-4 sm:w-4 text-emerald-500 shrink-0" />
+              <span className="truncate">{isFa ? 'IP خروجی VPN (Proxied IP)' : 'VPN Output IP'}</span>
             </div>
             <span
-              className={`text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full border ${
+              className={`text-[9px] sm:text-xs font-mono px-1.5 py-0.5 rounded-full border shrink-0 ${
                 ipData?.proxyActive
                   ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                   : 'bg-neutral-100 dark:bg-white/5 text-neutral-400 border-neutral-200 dark:border-white/10'
               }`}
             >
-              {ipData?.proxyActive ? (isFa ? 'تانل فعال' : 'Proxied') : (isFa ? 'غیرفعال' : 'Inactive')}
+              {ipData?.proxyActive ? (isFa ? 'فعال' : 'Proxied') : (isFa ? 'غیرفعال' : 'Inactive')}
             </span>
           </div>
 
           {ipData?.vpn ? (
-            <div className="space-y-0.5 sm:space-y-1 font-mono text-xs sm:text-sm">
-              <div className="text-base sm:text-lg font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+            <div className="space-y-0.5 font-mono min-w-0">
+              <div className="text-xs sm:text-lg font-bold text-emerald-600 dark:text-emerald-400 truncate">
                 {ipData.vpn.ip}
               </div>
-              <div className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-2">
-                <span>{ipData.vpn.city}, {ipData.vpn.region}, {ipData.vpn.country}</span>
+              <div className="text-[9px] sm:text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                <span>{ipData.vpn.city}, {ipData.vpn.country}</span>
               </div>
-              <div className="text-[11px] sm:text-xs text-neutral-400 dark:text-neutral-500 truncate">
+              <div className="text-[9px] sm:text-xs text-neutral-400 dark:text-neutral-500 truncate">
                 {ipData.vpn.org}
               </div>
             </div>
           ) : (
-            <div className="text-[11px] sm:text-xs text-neutral-400 py-1 sm:py-2">
+            <div className="text-[10px] sm:text-xs text-neutral-400 py-1 truncate">
               {checkingIp
-                ? (isFa ? 'در حال برقراری تست پروکسی...' : 'Checking proxy...')
-                : (isFa ? 'پروکسی متصل نیست یا ترافیک از آن رد نمیشود' : 'Proxy disconnected or unreachable')}
+                ? (isFa ? 'بررسی...' : 'Checking...')
+                : (isFa ? 'غیرمتصل' : 'Disconnected')}
             </div>
           )}
 
-          <div className="pt-1 flex justify-end">
+          <div className="pt-0.5 flex justify-end">
             <button
               onClick={fetchIpInfo}
               disabled={checkingIp}
-              className="text-[11px] sm:text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+              className="text-[9px] sm:text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
             >
-              <RefreshCw className={`h-3 w-3 sm:h-3.5 sm:w-3.5 ${checkingIp ? 'animate-spin' : ''}`} />
-              <span>{isFa ? 'بررسی مجدد IP' : 'Re-check IP'}</span>
+              <RefreshCw className={`h-2.5 w-2.5 sm:h-3 sm:w-3 ${checkingIp ? 'animate-spin' : ''}`} />
+              <span>{isFa ? 'بررسی' : 'Refresh'}</span>
             </button>
           </div>
         </div>
@@ -766,31 +821,32 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
             </p>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-            <button
-              onClick={handleTestAllConfigs}
-              disabled={testingAll || configs.length === 0}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2.5 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-800 dark:text-neutral-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-50 whitespace-nowrap"
-            >
-              <Zap className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-500 ${testingAll ? 'animate-bounce' : ''}`} />
-              <span>{testingAll ? (isFa ? 'در حال تست زنده...' : 'Live testing...') : (isFa ? 'تست زنده پینگ و سرعت' : 'Live Ping & Speed Test')}</span>
-            </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex flex-col gap-1 w-auto">
+              <button
+                onClick={handleTestAllConfigs}
+                disabled={testingAll || configs.length === 0}
+                className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-800 dark:text-neutral-200 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                <Zap className={`h-3 w-3 sm:h-3.5 sm:w-3.5 text-amber-500 ${testingAll ? 'animate-bounce' : ''}`} />
+                <span>{testingAll ? (isFa ? 'در حال تست...' : 'Testing...') : (isFa ? 'تست همه' : 'Test All')}</span>
+              </button>
 
-            <button
-              onClick={handleResetPingResults}
-              disabled={!configs.some(c => c.testResult)}
-              className="flex items-center justify-center gap-1 px-2.5 py-1.5 sm:px-3.5 sm:py-2.5 bg-neutral-100 dark:bg-white/5 hover:bg-rose-500/10 text-neutral-700 dark:text-neutral-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40 whitespace-nowrap"
-              title={isFa ? 'پاکسازی نتایج پینگ' : 'Reset Ping Results'}
-            >
-              <RotateCcw className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-neutral-500" />
-              <span>{isFa ? 'ریسیت' : 'Reset'}</span>
-            </button>
+              <button
+                onClick={handleResetPingResults}
+                disabled={!configs.some(c => c.testResult)}
+                className="flex items-center justify-center py-1 px-2.5 bg-neutral-100 dark:bg-white/5 hover:bg-rose-500/10 text-neutral-700 dark:text-neutral-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
+                title={isFa ? 'پاکسازی نتایج پینگ' : 'Reset Ping Results'}
+              >
+                <RotateCcw className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-neutral-500" />
+              </button>
+            </div>
 
             <button
               onClick={() => setShowAddModal(true)}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold transition shadow-md shadow-indigo-600/20 cursor-pointer whitespace-nowrap"
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition shadow-xs cursor-pointer whitespace-nowrap"
             >
-              <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <Plus className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               <span>{isFa ? 'افزودن کانفیگ' : 'Add Config'}</span>
             </button>
           </div>
@@ -817,22 +873,22 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
         ) : (
           <div className="space-y-2.5 sm:space-y-3">
             {/* Bulk Toolbar */}
-            <div className="flex items-center justify-between bg-neutral-100 dark:bg-white/5 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 text-[11px] sm:text-xs font-medium">
-              <label className="flex items-center gap-1.5 sm:gap-2 cursor-pointer text-neutral-700 dark:text-neutral-300">
-                <input
-                  type="checkbox"
-                  checked={selectedIndices.length === configs.length && configs.length > 0}
-                  onChange={toggleSelectAll}
-                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded border-neutral-300 dark:border-neutral-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                />
-                <span>
-                  {isFa
-                    ? `انتخاب همه (${selectedIndices.length} از ${configs.length})`
-                    : `Select All (${selectedIndices.length} of ${configs.length})`}
-                </span>
-              </label>
+            {selectedIndices.length > 0 && (
+              <div className="flex items-center justify-between bg-neutral-100 dark:bg-white/5 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 text-[11px] sm:text-xs font-medium">
+                <label className="flex items-center gap-1.5 sm:gap-2 cursor-pointer text-neutral-700 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={selectedIndices.length === configs.length && configs.length > 0}
+                    onChange={toggleSelectAll}
+                    className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded border-neutral-300 dark:border-neutral-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>
+                    {isFa
+                      ? `انتخاب همه (${selectedIndices.length} از ${configs.length})`
+                      : `Select All (${selectedIndices.length} of ${configs.length})`}
+                  </span>
+                </label>
 
-              {selectedIndices.length > 0 && (
                 <button
                   onClick={handleBulkDelete}
                   disabled={actionLoading}
@@ -843,8 +899,8 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                     {isFa ? `حذف ${selectedIndices.length} مورد` : `Delete ${selectedIndices.length}`}
                   </span>
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
             {configs.map((cfg) => {
               const isCurrentActive = status.activeIndex === cfg.index;
@@ -868,18 +924,6 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                       onChange={() => toggleSelectIndex(cfg.index)}
                       className="mt-1 w-3.5 h-3.5 sm:w-4 sm:h-4 rounded border-neutral-300 dark:border-neutral-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
                     />
-
-                    <button
-                      onClick={() => handleSelectConfig(cfg.index)}
-                      className={`mt-0.5 p-1 rounded-full border transition cursor-pointer shrink-0 ${
-                        isCurrentActive
-                          ? 'bg-indigo-600 border-indigo-600 text-white'
-                          : 'border-neutral-300 dark:border-neutral-600 hover:border-indigo-500'
-                      }`}
-                      title={isFa ? 'انتخاب به عنوان فعال' : 'Select as active'}
-                    >
-                      <Check className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                    </button>
 
                     <div className="space-y-0.5 sm:space-y-1 min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
@@ -927,24 +971,25 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                   <div className="flex items-center gap-1.5 sm:gap-2 self-end md:self-center shrink-0">
                     <button
                       onClick={() => handleTestConfig(cfg.index)}
-                      className="px-2.5 py-1 sm:px-3 sm:py-1.5 bg-neutral-200 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/15 text-neutral-800 dark:text-neutral-200 rounded-md sm:rounded-lg text-[11px] sm:text-xs font-medium transition flex items-center gap-1 cursor-pointer"
+                      className="p-1.5 sm:p-2 bg-neutral-200 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/15 text-neutral-800 dark:text-neutral-200 rounded-lg sm:rounded-xl transition flex items-center justify-center cursor-pointer"
+                      title={isFa ? 'پینگ' : 'Ping'}
                     >
-                      <Zap className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-amber-500" />
-                      <span>{isFa ? 'پینگ' : 'Ping'}</span>
+                      <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-500" />
                     </button>
 
                     {!isCurrentActive && (
                       <button
                         onClick={() => handleSelectConfig(cfg.index)}
-                        className="px-2.5 py-1 sm:px-3 sm:py-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 rounded-md sm:rounded-lg text-[11px] sm:text-xs font-medium transition cursor-pointer border border-indigo-500/20"
+                        className="p-1.5 sm:p-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 rounded-lg sm:rounded-xl transition cursor-pointer border border-indigo-500/20 flex items-center justify-center"
+                        title={isFa ? 'انتخاب' : 'Select'}
                       >
-                        {isFa ? 'انتخاب' : 'Select'}
+                        <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       </button>
                     )}
 
                     <button
                       onClick={() => handleDeleteConfig(cfg.index)}
-                      className="p-1 sm:p-1.5 text-neutral-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-md sm:rounded-lg transition cursor-pointer"
+                      className="p-1.5 sm:p-2 text-neutral-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg sm:rounded-xl transition cursor-pointer"
                       title={isFa ? 'حذف کانفیگ' : 'Delete'}
                     >
                       <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
@@ -1027,6 +1072,36 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Custom Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => setDeleteModal({ isOpen: false, type: null })}
+        onConfirm={confirmExecuteVpnDelete}
+        isLoading={isDeleting}
+        lang={lang}
+        itemName={deleteModal.configName}
+        itemType={deleteModal.type === 'bulk' ? (isFa ? 'کانفیگ‌های VPN' : 'VPN Configs') : (isFa ? 'کانفیگ VPN' : 'VPN Config')}
+        count={deleteModal.count}
+        title={isFa ? 'تایید حذف کانفیگ VPN' : 'Confirm VPN Config Deletion'}
+        description={
+          deleteModal.type === 'bulk'
+            ? (isFa ? `آیا از حذف ${deleteModal.count} کانفیگ انتخاب‌شده مطمئن هستید؟ این کانفیگ‌ها به طور کامل از لیست پاک می‌شوند.` : `Are you sure you want to delete ${deleteModal.count} selected configs?`)
+            : (isFa ? 'آیا از حذف این کانفیگ VPN اطمینان دارید؟ این عملکرد غیرقابل بازگشت است.' : 'Are you sure you want to delete this VPN config?')
+        }
+      />
+
+      {/* Undo Toast Notification */}
+      {undoToast && (
+        <UndoToast
+          key={undoToast.id}
+          id={undoToast.id}
+          message={undoToast.message}
+          lang={lang}
+          onUndo={() => handleRestoreVpnFromUndo(undoToast.trashId)}
+          onClose={() => setUndoToast(null)}
+        />
       )}
     </div>
   );

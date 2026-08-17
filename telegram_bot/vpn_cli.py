@@ -70,12 +70,12 @@ async def main():
                 # bulk delete
                 clean_str = raw_arg.replace("[", "").replace("]", "")
                 indices = [int(i.strip()) for i in clean_str.split(",") if i.strip().isdigit()]
-                count, msg = vpn.delete_configs_bulk(indices)
-                print(json.dumps({"success": count > 0, "deleted": count, "message": msg}))
+                count, msg, deleted_items = vpn.delete_configs_bulk(indices)
+                print(json.dumps({"success": count > 0, "deleted": count, "message": msg, "deletedConfigs": deleted_items}))
             else:
                 idx = int(raw_arg)
-                ok, msg = vpn.delete_config(idx)
-                print(json.dumps({"success": ok, "message": msg}))
+                ok, msg, deleted_item = vpn.delete_config(idx)
+                print(json.dumps({"success": ok, "message": msg, "deletedConfigs": [deleted_item] if deleted_item else []}))
         except Exception as e:
             print(json.dumps({"error": str(e)}))
 

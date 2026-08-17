@@ -10,6 +10,7 @@ interface LogsViewerProps {
 
 export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
   const t = translations[lang];
+  const isFa = lang === 'fa';
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedLevel, setSelectedLevel] = useState<string>('ALL');
@@ -60,21 +61,39 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
     URL.revokeObjectURL(url);
   };
 
+  // Helper to highlight query matches
+  const highlightMatch = (text: string, query: string) => {
+    if (!query.trim()) return text;
+    const regex = new RegExp(`(${query.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return parts.map((part, i) =>
+      part.toLowerCase() === query.toLowerCase() ? (
+        <mark key={i} className="bg-amber-400/40 text-amber-200 px-0.5 rounded">
+          {part}
+        </mark>
+      ) : (
+        part
+      )
+    );
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 select-none">
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-neutral-200 dark:border-white/10">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-neutral-200 dark:border-white/10 select-none">
         <div>
           <h2 className="text-xl font-bold text-neutral-900 dark:text-white flex items-center gap-2">
             <FileText className="h-5 w-5 text-rose-500" />
             <span>{t.systemLogsTitle}</span>
           </h2>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            مشاهده و بررسی رویدادها، لاگ‌های سیستمی و هشدارهای سرور
+            {isFa
+              ? 'مشاهده و بررسی رویدادها، لاگ‌های سیستمی و هشدارهای سرور'
+              : 'Inspect system events and server logs'}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap select-none">
           <button
             onClick={handleExportLogs}
             className="px-3 py-2 rounded-xl text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-blue-500/20"
@@ -86,6 +105,7 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
           <button
             onClick={fetchLogs}
             className="p-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition cursor-pointer"
+            title="بروزرسانی لاگ‌ها"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -93,7 +113,7 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
       </div>
 
       {/* Search and Filters */}
-      <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xl">
+      <div className="p-4 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xl select-none">
         <div className="relative flex-1">
           <Search className="h-4 w-4 text-neutral-400 absolute left-3 top-2.5" />
           <input
@@ -101,7 +121,7 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
             value={searchQuery || ''}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={t.searchLogs}
-            className="w-full pl-9 pr-3 py-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs text-neutral-900 dark:text-neutral-100 font-mono"
+            className="w-full pl-9 pr-3 py-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs text-neutral-900 dark:text-neutral-100 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
 
@@ -122,25 +142,33 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
       </div>
 
       {/* Log Console Container */}
-      <div className="rounded-2xl border border-neutral-200 dark:border-white/10 bg-neutral-900 dark:bg-[#121214] text-neutral-200 p-5 font-mono text-xs h-[520px] overflow-y-auto space-y-2.5 shadow-2xl">
+      <div
+        className="relative rounded-2xl border border-neutral-200 dark:border-white/10 bg-neutral-900 dark:bg-[#121214] text-neutral-200 p-4 sm:p-5 font-mono text-xs h-[520px] overflow-y-auto space-y-2.5 shadow-2xl select-text cursor-text overscroll-contain touch-pan-y"
+        dir="ltr"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
         {filteredLogs.length === 0 ? (
-          <p className="text-neutral-500 italic text-center py-12">هیچ لاگی با فیلتر مشخص شده پیدا نشد.</p>
+          <p className="text-neutral-500 italic text-center py-12 select-none">
+            {isFa ? 'هیچ لاگی با فیلتر مشخص شده پیدا نشد.' : 'No logs found matching filter.'}
+          </p>
         ) : (
           filteredLogs.map((log) => (
             <div
               key={log.id}
-              className={`p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition flex flex-col sm:flex-row sm:items-center gap-3 ${
+              className={`p-2.5 sm:p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition flex flex-col sm:flex-row sm:items-center gap-2.5 select-text ${
                 log.level === 'ERROR'
-                  ? 'border-r-4 border-r-red-500'
+                  ? 'border-l-4 border-l-red-500'
                   : log.level === 'WARN'
-                  ? 'border-r-4 border-r-amber-500'
-                  : 'border-r-4 border-r-blue-500'
+                  ? 'border-l-4 border-l-amber-500'
+                  : 'border-l-4 border-l-blue-500'
               }`}
             >
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-gray-500 text-[11px] font-mono">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+              <div className="flex items-center gap-2 shrink-0 select-text">
+                <span className="text-gray-500 text-[11px] font-mono select-text">
+                  [{new Date(log.timestamp).toLocaleTimeString()}]
+                </span>
                 <span
-                  className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase tracking-wider ${
+                  className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase tracking-wider select-none ${
                     log.level === 'ERROR'
                       ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                       : log.level === 'WARN'
@@ -150,9 +178,12 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
                 >
                   {log.level}
                 </span>
-                <span className="text-purple-400 font-semibold font-mono">[{log.source}]</span>
+                <span className="text-purple-400 font-semibold font-mono select-text">[{log.source}]</span>
               </div>
-              <p className="text-gray-300 break-words flex-1 leading-relaxed font-mono text-xs">{log.message}</p>
+
+              <p className="text-gray-300 break-words flex-1 leading-relaxed font-mono text-xs select-text cursor-text selection:bg-blue-600/40 selection:text-white">
+                {highlightMatch(log.message, searchQuery)}
+              </p>
             </div>
           ))
         )}

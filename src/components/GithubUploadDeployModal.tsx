@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, File, Folder, X, Check, ArrowRight, GitCommit, Github, Shield } from 'lucide-react';
+import { UploadCloud, File, Folder, X, Check, ArrowRight, GitCommit, Github, Shield, RotateCcw } from 'lucide-react';
 import { Language } from '../types';
 import { translations } from '../locales/translations';
 
@@ -41,6 +41,7 @@ export const GithubUploadDeployModal: React.FC<GithubUploadDeployModalProps> = (
   const [taskName, setTaskName] = useState(initialTaskName || 'MyServerApp');
   const [installReqs, setInstallReqs] = useState(true);
   const [useVpn, setUseVpn] = useState(true);
+  const [autoRestartOnCrash, setAutoRestartOnCrash] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -193,6 +194,7 @@ export const GithubUploadDeployModal: React.FC<GithubUploadDeployModalProps> = (
       formData.append('targetDir', targetPath);
       formData.append('installRequirements', installReqs.toString());
       formData.append('useVpn', useVpn.toString());
+      formData.append('autoRestartOnCrash', autoRestartOnCrash.toString());
 
       if (sourceType === 'files') {
         const filePaths: string[] = [];
@@ -504,6 +506,31 @@ export const GithubUploadDeployModal: React.FC<GithubUploadDeployModalProps> = (
                     {lang === 'fa'
                       ? 'استفاده از پروکسی VPN (127.0.0.1:10808) در صورت روشن بودن VPN'
                       : 'Use VPN proxy (127.0.0.1:10808) when VPN is enabled'}
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-start gap-2 pt-0.5">
+                <input
+                  type="checkbox"
+                  id="autoRestartOnCrash"
+                  checked={autoRestartOnCrash}
+                  onChange={(e) => setAutoRestartOnCrash(e.target.checked)}
+                  className="rounded border-neutral-700 bg-neutral-800 text-emerald-600 focus:ring-emerald-500 cursor-pointer mt-0.5"
+                />
+                <label htmlFor="autoRestartOnCrash" className="text-xs text-neutral-300 cursor-pointer font-medium flex flex-col">
+                  <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                    <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>
+                      {lang === 'fa'
+                        ? 'راه‌اندازی مجدد خودکار در صورت کرش برنامه (Auto-Restart on Crash)'
+                        : 'Auto-restart application on crash'}
+                    </span>
+                  </span>
+                  <span className="text-[11px] text-neutral-400 mt-0.5">
+                    {lang === 'fa'
+                      ? 'در صورت توقف دستی توسط شما، برنامه دوباره راه اندازی نخواهد شد.'
+                      : 'If manually stopped by you, the app will not auto-restart.'}
                   </span>
                 </label>
               </div>

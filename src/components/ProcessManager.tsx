@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2, Boxes, Shield } from 'lucide-react';
+import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2, Boxes, Shield, RotateCcw } from 'lucide-react';
 import { BackgroundTask, SystemProcess, Language } from '../types';
 import { translations } from '../locales/translations';
 import { GithubUploadDeployModal } from './GithubUploadDeployModal';
 import { ProjectUpdateModal } from './ProjectUpdateModal';
 import { PythonPackagesModal } from './PythonPackagesModal';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface ProcessManagerProps {
   token: string | null;
@@ -21,6 +22,15 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
   // New script & package modals state
   const [isGithubDeployModalOpen, setIsGithubDeployModalOpen] = useState(false);
   const [isPythonPackagesModalOpen, setIsPythonPackagesModalOpen] = useState(false);
+
+  // Custom Delete Confirm Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    type: 'single' | 'clearStopped' | null;
+    taskId?: string;
+    taskName?: string;
+  }>({ isOpen: false, type: null });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -198,44 +208,60 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
     }
   };
 
-  const handleRemoveTask = async (id: string) => {
-    try {
-      const res = await fetch('/api/processes/remove', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-auth-token': token || ''
-        },
-        body: JSON.stringify({ id })
-      });
-      if (res.ok) {
-        setTasks(prev => prev.filter(t => t.id !== id));
-        if (activeTaskLogs?.id === id) {
-          setActiveTaskLogs(null);
-        }
-      } else {
-        const err = await res.json().catch(() => ({}));
-        alert(err.error || 'خطا در حذف اسکریپت');
-      }
-    } catch {
-      alert('خطا در ارتباط با سرور');
-    }
+  const handleRemoveTask = (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    setDeleteModal({
+      isOpen: true,
+      type: 'single',
+      taskId: id,
+      taskName: task?.name || task?.command || id
+    });
   };
 
-  const handleClearStoppedTasks = async () => {
+  const handleClearStoppedTasks = () => {
+    setDeleteModal({
+      isOpen: true,
+      type: 'clearStopped'
+    });
+  };
+
+  const confirmExecuteTaskDelete = async () => {
+    if (!deleteModal.type) return;
+    setIsDeleting(true);
     try {
-      const res = await fetch('/api/processes/clear-stopped', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-auth-token': token || ''
+      if (deleteModal.type === 'single' && deleteModal.taskId) {
+        const id = deleteModal.taskId;
+        const res = await fetch('/api/processes/remove', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          },
+          body: JSON.stringify({ id })
+        });
+        if (res.ok) {
+          setTasks(prev => prev.filter(t => t.id !== id));
+          if (activeTaskLogs?.id === id) {
+            setActiveTaskLogs(null);
+          }
         }
-      });
-      if (res.ok) {
-        fetchProcesses();
+      } else if (deleteModal.type === 'clearStopped') {
+        const res = await fetch('/api/processes/clear-stopped', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          }
+        });
+        if (res.ok) {
+          fetchProcesses();
+        }
       }
     } catch {
-      alert('خطا در پاکسازی اسکریپت‌های متوقف شده');
+      // silent catch or handle
+    } finally {
+      setIsDeleting(false);
+      setDeleteModal({ isOpen: false, type: null });
     }
   };
 
@@ -416,6 +442,25 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
                         <Shield className="h-2.5 w-2.5" />
                         <span>{task.useVpn !== false ? 'VPN Proxy' : 'Direct'}</span>
                       </span>
+
+                      {task.autoRestartOnCrash !== false && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                          title={lang === 'fa' ? 'راه‌اندازی مجدد خودکار در صورت کرش فعال است' : 'Auto-restart on crash enabled'}
+                        >
+                          <RotateCcw className="h-2.5 w-2.5" />
+                          <span>{lang === 'fa' ? 'راه‌اندازی خودکار' : 'Auto-Restart'}</span>
+                        </span>
+                      )}
+
+                      {(task.crashCount ?? 0) > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          title={lang === 'fa' ? `تعداد کرش‌های بازیابی شده: ${task.crashCount}` : `Crashes recovered: ${task.crashCount}`}
+                        >
+                          <span>{lang === 'fa' ? `کرش‌ها: ${task.crashCount}` : `Crashes: ${task.crashCount}`}</span>
+                        </span>
+                      )}
                     </div>
                     <p className="text-[10px] sm:text-[11px] font-mono text-neutral-500 dark:text-neutral-400 truncate mt-0.5 sm:mt-1 dir-ltr text-right">
                       {task.command}
@@ -576,19 +621,19 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
             </div>
 
             {/* Modal Live Body */}
-            <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden select-none">
               <div
                 ref={modalLogContainerRef}
                 onScroll={handleLogScroll}
-                className="flex-1 overflow-y-auto p-4 bg-[#0d0d0e] leading-relaxed whitespace-pre-wrap text-neutral-200 text-xs font-mono space-y-1 scrollbar-thin scrollbar-thumb-neutral-800"
+                className="flex-1 overflow-y-auto p-4 bg-[#0d0d0e] leading-relaxed whitespace-pre-wrap text-neutral-200 text-xs font-mono space-y-1 scrollbar-thin scrollbar-thumb-neutral-800 select-text cursor-text selection:bg-blue-600/40 selection:text-white"
               >
                 {activeTaskLogs.logs.length === 0 ? (
-                  <div className="text-neutral-500 py-12 text-center italic">
+                  <div className="text-neutral-500 py-12 text-center italic select-none">
                     در حال انتظار برای خروجی اسکریپت...
                   </div>
                 ) : (
                   activeTaskLogs.logs.map((logLine, idx) => (
-                    <div key={idx} className="break-words">
+                    <div key={idx} className="break-words select-text hover:bg-white/5 px-1 py-0.5 rounded transition">
                       {logLine}
                     </div>
                   ))
@@ -664,6 +709,23 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
         lang={lang}
         isOpen={isPythonPackagesModalOpen}
         onClose={() => setIsPythonPackagesModalOpen(false)}
+      />
+
+      {/* Custom Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => setDeleteModal({ isOpen: false, type: null })}
+        onConfirm={confirmExecuteTaskDelete}
+        isLoading={isDeleting}
+        lang={lang}
+        itemName={deleteModal.taskName}
+        itemType={deleteModal.type === 'clearStopped' ? (lang === 'fa' ? 'اسکریپت‌های متوقف‌شده' : 'Stopped Scripts') : (lang === 'fa' ? 'پردازش / اسکریپت' : 'Script / Process')}
+        title={lang === 'fa' ? 'تایید حذف اسکریپت پس‌زمینه' : 'Confirm Script Deletion'}
+        description={
+          deleteModal.type === 'clearStopped'
+            ? (lang === 'fa' ? 'آیا از پاکسازی و حذف تمام اسکریپت‌های متوقف‌شده اطمینان دارید؟' : 'Are you sure you want to clear all stopped scripts?')
+            : (lang === 'fa' ? 'آیا از حذف این پردازش و تمام لاگ‌های ثبت‌شده آن اطمینان دارید؟' : 'Are you sure you want to delete this process and its log history?')
+        }
       />
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Package, Trash2, Search, RefreshCw, X, Plus, AlertTriangle, CheckSquare, Square, Check, Loader2, Boxes } from 'lucide-react';
 import { Language } from '../types';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface PythonPackage {
   name: string;
@@ -32,6 +33,14 @@ export const PythonPackagesModal: React.FC<PythonPackagesModalProps> = ({
   const [newPackageName, setNewPackageName] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState<boolean>(false);
+
+  // Custom Delete Confirm Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    uninstallAll: boolean;
+    count?: number;
+    pkgName?: string;
+  }>({ isOpen: false, uninstallAll: false });
 
   const fetchPackages = async () => {
     if (!token) return;
@@ -97,7 +106,7 @@ export const PythonPackagesModal: React.FC<PythonPackagesModalProps> = ({
     }
   };
 
-  const handleUninstall = async (uninstallAllMode: boolean = false) => {
+  const handleUninstall = (uninstallAllMode: boolean = false) => {
     const targetList = uninstallAllMode ? [] : Array.from(selectedPackages);
 
     if (!uninstallAllMode && targetList.length === 0) {
@@ -108,11 +117,17 @@ export const PythonPackagesModal: React.FC<PythonPackagesModalProps> = ({
       return;
     }
 
-    const confirmMsg = uninstallAllMode
-      ? (isFa ? 'آیا از حذف تمام کتابخانه‌های پایتون نصب‌شده مطمئن هستید؟ (کتابخانه‌های اصلی مانند pip حفظ خواهند شد)' : 'Are you sure you want to uninstall ALL Python packages?')
-      : (isFa ? `آیا از حذف ${targetList.length} کتابخانه انتخاب‌شده مطمئن هستید؟` : `Are you sure you want to uninstall ${targetList.length} selected packages?`);
+    setDeleteModal({
+      isOpen: true,
+      uninstallAll: uninstallAllMode,
+      count: targetList.length,
+      pkgName: targetList.length === 1 ? targetList[0] : undefined
+    });
+  };
 
-    if (!window.confirm(confirmMsg)) return;
+  const confirmExecuteUninstall = async () => {
+    const uninstallAllMode = deleteModal.uninstallAll;
+    const targetList = uninstallAllMode ? [] : Array.from(selectedPackages);
 
     setUninstalling(true);
     setFeedback({
@@ -154,6 +169,7 @@ export const PythonPackagesModal: React.FC<PythonPackagesModalProps> = ({
       });
     } finally {
       setUninstalling(false);
+      setDeleteModal({ isOpen: false, uninstallAll: false });
     }
   };
 
@@ -442,6 +458,24 @@ export const PythonPackagesModal: React.FC<PythonPackagesModalProps> = ({
             {isFa ? 'بستن' : 'Close'}
           </button>
         </div>
+
+        {/* Custom Delete Confirmation Modal */}
+        <DeleteConfirmModal
+          isOpen={deleteModal.isOpen}
+          onClose={() => setDeleteModal({ isOpen: false, uninstallAll: false })}
+          onConfirm={confirmExecuteUninstall}
+          isLoading={uninstalling}
+          lang={lang}
+          itemName={deleteModal.pkgName}
+          itemType={deleteModal.uninstallAll ? (isFa ? 'همه پکیج‌ها' : 'All Packages') : (isFa ? 'پکیج پایتون' : 'Python Package')}
+          count={deleteModal.uninstallAll ? packages.length : deleteModal.count}
+          title={isFa ? 'تایید حذف کتابخانه پایتون' : 'Confirm Package Uninstall'}
+          description={
+            deleteModal.uninstallAll
+              ? (isFa ? 'آیا از حذف تمامی کتابخانه‌های پایتون غیرضروری سرور مطمئن هستید؟ (پکیج‌های سیستمی اصلی حفظ می‌شوند)' : 'Are you sure you want to uninstall ALL non-essential Python packages?')
+              : (isFa ? `آیا از حذف ${deleteModal.count || 1} کتابخانه انتخاب‌شده اطمینان دارید؟` : `Are you sure you want to uninstall ${deleteModal.count || 1} selected package(s)?`)
+          }
+        />
       </div>
     </div>
   );

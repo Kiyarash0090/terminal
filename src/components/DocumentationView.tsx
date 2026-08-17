@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   BookOpen,
   Shield,
@@ -30,6 +30,8 @@ import { Language } from '../types';
 
 interface DocumentationViewProps {
   lang: Language;
+  isModalView?: boolean;
+  autoFocusSearch?: boolean;
 }
 
 interface DocSection {
@@ -43,14 +45,21 @@ interface DocSection {
   badgeColor?: string;
   summaryFa: string;
   summaryEn: string;
+  keywords?: string[];
   detailsFa: React.ReactNode;
   detailsEn: React.ReactNode;
 }
 
-export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) => {
+export const DocumentationView: React.FC<DocumentationViewProps> = ({ 
+  lang, 
+  isModalView = false, 
+  autoFocusSearch = false 
+}) => {
   const isFa = lang === 'fa';
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     'security': true,
     'terminal': true,
@@ -59,9 +68,26 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
     'process': false,
     'telegram': false,
     'monitoring': false,
-    'deploy': false,
   });
   const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  // Focus search input on mount if requested
+  useEffect(() => {
+    if (autoFocusSearch && searchInputRef.current) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [autoFocusSearch]);
+
+  // When search query changes, expand matching sections automatically for quick reading
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      const allExpanded: Record<string, boolean> = {};
+      docSections.forEach((s) => (allExpanded[s.id] = true));
+      setExpandedSections(allExpanded);
+    }
+  }, [searchQuery]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -71,18 +97,6 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
 
   const toggleSection = (id: string) => {
     setExpandedSections((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const expandAll = () => {
-    const allExpanded: Record<string, boolean> = {};
-    docSections.forEach((s) => (allExpanded[s.id] = true));
-    setExpandedSections(allExpanded);
-  };
-
-  const collapseAll = () => {
-    const allCollapsed: Record<string, boolean> = {};
-    docSections.forEach((s) => (allCollapsed[s.id] = false));
-    setExpandedSections(allCollapsed);
   };
 
   // Categories list
@@ -110,6 +124,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
       badgeColor: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
       summaryFa: 'مدیریت حساب کاربری، تغییر رمز عبور، کلیدهای API و احراز هویت هوشمند پنل.',
       summaryEn: 'Account management, password updates, API keys, and secure authentication.',
+      keywords: ['admin', 'admin123', 'pass', 'password', 'login', 'token', 'jwt', 'security', 'ورود', 'رمز', 'پسورد', 'امنیت'],
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
@@ -174,6 +189,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
       badgeColor: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30',
       summaryFa: 'اجرای زنده دستورات لینوکس، خروجی استریم زنده، قابلیت Detach و کلیدهای میانبر کاربردی.',
       summaryEn: 'Live bash terminal output, background detach mode, history navigating & shortcuts.',
+      keywords: ['ctrl+c', 'ctrl+a+d', 'ctrl+l', 'detach', 'interrupt', 'clear', 'bash', 'terminal', 'cmd', 'شورتکد', 'میانبر', 'ترمینال'],
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
@@ -238,6 +254,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
       badgeColor: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30',
       summaryFa: 'هدایت کل ترافیک سرور از پروکسی، پشتیبانی از VLESS, VMess, Trojan, REALITY و تست پینگ آنلاین.',
       summaryEn: 'Route full server network through VLESS, VMess, Trojan, REALITY with live IP test.',
+      keywords: ['vless', 'vmess', 'trojan', 'shadowsocks', 'reality', 'xray', 'v2ray', 'socks5', '10808', '127.0.0.1:10808', 'tunnel', 'ping', 'ip', 'پروکسی', 'تانل', 'وی‌پی‌ان'],
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
@@ -302,6 +319,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
       badgeColor: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
       summaryFa: 'مدیریت کامل فایل‌ها، آپلود پوشه‌ای و چندتایی، ویرایش کد، تغییر Chmod و نمایش دیتابیس SQLite.',
       summaryEn: 'Full file ops, drag & drop folder upload, live code editor, Chmod & SQLite database viewer.',
+      keywords: ['chmod', '755', '644', '777', 'sqlite', 'db', '.db', '.sqlite', 'editor', 'upload', 'zip', 'unzip', 'فایل', 'دیتابیس', 'سطح دسترسی'],
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
@@ -368,6 +386,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
       badgeColor: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30',
       summaryFa: 'مدیریت سرویس‌های ۲۴ ساعته با PM2، نصب کتابخانه‌های pip3، ساخت اسکریپت و دیپلوی از GitHub.',
       summaryEn: 'Keep 24/7 PM2 processes running, manage pip packages, build raw code or clone GitHub repos.',
+      keywords: ['pm2', 'pip', 'python', 'pip3', 'github', 'deploy', 'requirements.txt', 'package.json', 'اسکریپت', 'پایتون', 'دیپلوی'],
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
@@ -416,6 +435,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
       badgeColor: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30',
       summaryFa: 'اتصال ربات تلگرام، دریافت هشدارهای فشار منابع، خاموش/روشن کردن VPN و اجرای دستورات با تلگرام.',
       summaryEn: 'Connect Telegram bot token, receive server threshold alerts, control VPN & system via chat.',
+      keywords: ['telegram', 'bot', '/status', '/vpn_on', '/vpn_off', '/pm2_list', 'botfather', 'token', 'تلگرام', 'ربات', 'دستورات'],
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
@@ -441,7 +461,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
           </div>
 
           <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-700 dark:text-cyan-300 text-[11px]">
-            <strong>هشدارهای خودکار سیستم:</strong> در صورت افزایش مصرف CPU بالای ۸۵٪ یا رم بالای ۹۰٪ یا قطعی VPN، ربات پیام هشدار آنی برای Chat ID ادمین ارسال خواهد کرد.
+            <strong>کنترل از راه دور:</strong> با ارسال دستورات فوق می‌توانید وضعیت سرور را مشاهده نموده و ربات و تانل را از داخل تلگرام مدیریت کنید.
           </div>
         </div>
       ),
@@ -509,62 +529,59 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({ lang }) =>
     const title = (isFa ? section.titleFa : section.titleEn).toLowerCase();
     const summary = (isFa ? section.summaryFa : section.summaryEn).toLowerCase();
     const category = section.category.toLowerCase();
+    const badge = ((isFa ? section.badgeFa : section.badgeEn) || '').toLowerCase();
+    const keywords = (section.keywords || []).join(' ').toLowerCase();
 
-    return matchesCategory && (title.includes(query) || summary.includes(query) || category.includes(query));
+    const matchesSearch = 
+      title.includes(query) || 
+      summary.includes(query) || 
+      category.includes(query) || 
+      badge.includes(query) ||
+      keywords.includes(query);
+
+    return matchesCategory && matchesSearch;
   });
 
   return (
-    <div className="space-y-4 sm:space-y-6 max-w-5xl mx-auto pb-8">
+    <div className={`space-y-4 max-w-5xl mx-auto ${isModalView ? 'pb-2' : 'pb-8'}`}>
       {/* Header Banner */}
-      <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-2.5 sm:gap-4">
-            <div className="p-2.5 sm:p-3.5 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 shrink-0">
-              <BookOpen className="h-5 w-5 sm:h-7 sm:w-7" />
-            </div>
-            <div>
-              <h2 className="text-base sm:text-xl font-bold text-neutral-900 dark:text-white flex items-center gap-2">
-                <span>{isFa ? 'راهنمای جامع و داکیومنت سامانه' : 'System Documentation & Guide'}</span>
-              </h2>
-              <p className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
-                {isFa
-                  ? 'آموزش کامل تمام قابلیت‌های ترمینال، VPN، مدیریت فایل‌ها، پردازش‌های PM2 و ربات تلگرام'
-                  : 'Comprehensive operational manual for Web Terminal, VPN Engine, PM2 Scripts & System API'}
-              </p>
+      <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm">
+        {!isModalView && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div className="flex items-start gap-2.5 sm:gap-4">
+              <div className="p-2.5 sm:p-3 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 shrink-0">
+                <BookOpen className="h-5 w-5 sm:h-6 sm:w-6" />
+              </div>
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                  <span>{isFa ? 'راهنمای جامع و داکیومنت سامانه' : 'System Documentation & Guide'}</span>
+                </h2>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
+                  {isFa
+                    ? 'آموزش کامل تمام قابلیت‌های ترمینال، VPN، مدیریت فایل‌ها، پردازش‌های PM2 و ربات تلگرام'
+                    : 'Comprehensive operational manual for Web Terminal, VPN Engine, PM2 Scripts & System API'}
+                </p>
+              </div>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-            <button
-              onClick={expandAll}
-              className="px-2.5 py-1.5 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 rounded-lg text-[11px] font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer"
-            >
-              {isFa ? 'باز کردن همه' : 'Expand All'}
-            </button>
-            <button
-              onClick={collapseAll}
-              className="px-2.5 py-1.5 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 rounded-lg text-[11px] font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer"
-            >
-              {isFa ? 'بستن همه' : 'Collapse All'}
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* Search Bar */}
-        <div className="mt-4 pt-3 border-t border-neutral-200 dark:border-white/10 flex flex-col sm:flex-row gap-2.5">
+        <div className={`flex flex-col sm:flex-row gap-2.5 ${!isModalView ? 'pt-3 border-t border-neutral-200 dark:border-white/10' : ''}`}>
           <div className="relative flex-1">
             <Search className="absolute left-3 dir-rtl:left-auto dir-rtl:right-3 top-2.5 h-4 w-4 text-neutral-400" />
             <input
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={isFa ? 'جستجو در راهنما (مثلاً: VPN, PM2, کلیدها, دیتابیس...)' : 'Search documentation...'}
-              className="w-full bg-neutral-100 dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded-lg sm:rounded-xl pl-9 pr-3 dir-rtl:pl-3 dir-rtl:pr-9 py-2 text-xs text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              placeholder={isFa ? 'جستجوی سریع دستورات (مانند: /status, vpn_on, chmod, pm2, 10808...)' : 'Quick search commands (e.g. /status, vpn_on, chmod, pm2)...'}
+              className="w-full bg-neutral-100 dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded-xl pl-9 pr-8 dir-rtl:pl-8 dir-rtl:pr-9 py-2 text-xs text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-inner"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 dir-rtl:right-auto dir-rtl:left-3 top-2.5 text-xs text-neutral-400 hover:text-white cursor-pointer"
+                className="absolute right-3 dir-rtl:right-auto dir-rtl:left-3 top-2.5 text-xs text-neutral-400 hover:text-white cursor-pointer px-1"
               >
                 ✕
               </button>

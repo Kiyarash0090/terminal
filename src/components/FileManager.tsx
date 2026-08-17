@@ -30,11 +30,23 @@ import {
   CheckCircle2,
   AlertCircle,
   Edit3,
-  Search
+  Search,
+  Archive,
+  FolderArchive,
+  FileArchive,
+  Layers,
+  FolderDown,
+  Eye,
+  EyeOff,
+  Lock
 } from 'lucide-react';
 import { FileItem, Language } from '../types';
 import { translations } from '../locales/translations';
 import { DirectFileUploadModal } from './DirectFileUploadModal';
+import { AdvancedCodeEditor } from './AdvancedCodeEditor';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { UndoToast } from './UndoToast';
+import { ArchiveViewerModal } from './ArchiveViewerModal';
 
 interface FileManagerProps {
   token: string | null;
@@ -46,6 +58,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
   const [currentPath, setCurrentPath] = useState<string>('');
   const [items, setItems] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+
+  const filteredItems = React.useMemo(() => {
+    if (!searchTerm.trim()) return items;
+    const term = searchTerm.toLowerCase().trim();
+    return items.filter((item) => item.name.toLowerCase().includes(term));
+  }, [items, searchTerm]);
 
   // Modal states
   const [editingFile, setEditingFile] = useState<{ path: string; content: string } | null>(null);
@@ -60,6 +79,47 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
   const [newFolderName, setNewFolderName] = useState('');
   const [isNewFileModalOpen, setIsNewFileModalOpen] = useState(false);
   const [newFileName, setNewFileName] = useState('');
+
+  // Custom Delete Confirm Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    type: 'single' | 'bulk' | null;
+    path?: string;
+    itemName?: string;
+    itemType?: string;
+    count?: number;
+  }>({
+    isOpen: false,
+    type: null
+  });
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Undo Toast State
+  const [undoToast, setUndoToast] = useState<{
+    id: string;
+    trashIds: string[];
+    message: string;
+    subMessage?: string;
+  } | null>(null);
+
+  // Zip & Extract Modal States
+  const [archiveViewerPath, setArchiveViewerPath] = useState<string | null>(null);
+  const [compressModal, setCompressModal] = useState<{
+    paths: string[];
+    defaultName: string;
+    format: 'zip' | '7z' | 'rar' | 'tar.gz';
+    password?: string;
+    showPassword?: boolean;
+  } | null>(null);
+  const [extractModal, setExtractModal] = useState<{
+    archivePath: string;
+    destDir: string;
+    password?: string;
+    showPassword?: boolean;
+  } | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [operationToast, setOperationToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Database Viewer Modal States
   const [viewingDbFile, setViewingDbFile] = useState<{ path: string } | null>(null);
@@ -446,8 +506,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
     setLoading(true);
     const target = pathUrl || currentPath;
     try {
-      const res = await fetch(`/api/files/list?path=${encodeURIComponent(target)}`, {
-        headers: { 'x-auth-token': token }
+      const res = await fetch(`/api/files/list?path=${encodeURIComponent(target)}&_t=${Date.now()}`, {
+        headers: { 
+          'x-auth-token': token,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        cache: 'no-store'
       });
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
         const data = await res.json();
@@ -483,14 +548,18 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
   const handleNavigate = (newPath: string) => {
     setSelectedPaths([]);
+    setSearchTerm('');
     fetchFiles(newPath);
   };
 
   const handleToggleSelectAll = () => {
-    if (selectedPaths.length === items.length) {
-      setSelectedPaths([]);
+    const isAllFilteredSelected = filteredItems.length > 0 && filteredItems.every(i => selectedPaths.includes(i.path));
+    if (isAllFilteredSelected) {
+      const filteredPathSet = new Set(filteredItems.map(i => i.path));
+      setSelectedPaths(selectedPaths.filter(p => !filteredPathSet.has(p)));
     } else {
-      setSelectedPaths(items.map(i => i.path));
+      const merged = Array.from(new Set([...selectedPaths, ...filteredItems.map(i => i.path)]));
+      setSelectedPaths(merged);
     }
   };
 
@@ -502,45 +571,63 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedPaths.length === 0) return;
-    if (!confirm(t.confirmDelete)) return;
-    try {
-      for (const itemPath of selectedPaths) {
-        await fetch('/api/files/delete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-auth-token': token || ''
-          },
-          body: JSON.stringify({ itemPath })
-        });
-      }
-      setSelectedPaths([]);
-      fetchFiles(currentPath);
-    } catch (e) {
-      alert('Failed to delete selected items');
+    setDeleteModal({
+      isOpen: true,
+      type: 'bulk',
+      count: selectedPaths.length,
+      itemType: lang === 'fa' ? 'فایل/پوشه' : 'Items'
+    });
+  };
+
+  const handleDownloadFile = (item: FileItem) => {
+    const fileName = item.isDirectory ? `${item.name}.zip` : item.name;
+    const downloadUrl = `/api/files/download?path=${encodeURIComponent(item.path)}&token=${encodeURIComponent(token || '')}`;
+
+    // 1. Direct hidden iframe download trigger
+    let iframe = document.getElementById('global_download_iframe') as HTMLIFrameElement;
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'global_download_iframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
     }
+    iframe.src = downloadUrl;
+
+    // 2. Synchronous anchor element trigger as fallback
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = downloadUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+
+    setTimeout(() => {
+      if (document.body.contains(a)) {
+        document.body.removeChild(a);
+      }
+    }, 1500);
   };
 
   const handleBulkDownload = () => {
     items.filter(item => selectedPaths.includes(item.path)).forEach((item, index) => {
       setTimeout(() => {
-        const a = document.createElement('a');
-        a.href = `/api/files/download?path=${encodeURIComponent(item.path)}&token=${encodeURIComponent(token || '')}`;
-        a.download = item.isDirectory ? `${item.name}.zip` : item.name;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          document.body.removeChild(a);
-        }, 1000);
+        handleDownloadFile(item);
       }, index * 300);
     });
+  };
+
+  const isArchiveFile = (filename: string) => {
+    const lower = filename.toLowerCase();
+    return lower.endsWith('.zip') || lower.endsWith('.tar.gz') || lower.endsWith('.tgz') || lower.endsWith('.tar') || lower.endsWith('.rar') || lower.endsWith('.7z');
   };
 
   const handleOpenFile = async (item: FileItem) => {
     if (item.isDirectory) {
       handleNavigate(item.path);
+    } else if (isArchiveFile(item.name)) {
+      setArchiveViewerPath(item.path);
     } else if (
       item.path.toLowerCase().endsWith('.db') || 
       item.path.toLowerCase().endsWith('.sqlite') || 
@@ -588,8 +675,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
     }
   };
 
-  const handleSaveFile = async () => {
+  const handleSaveFile = async (newContent?: string) => {
     if (!editingFile) return;
+    const contentToSave = newContent !== undefined ? newContent : editingFile.content;
     try {
       const res = await fetch('/api/files/write', {
         method: 'POST',
@@ -597,14 +685,148 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
           'Content-Type': 'application/json',
           'x-auth-token': token || ''
         },
-        body: JSON.stringify({ filePath: editingFile.path, content: editingFile.content })
+        body: JSON.stringify({ filePath: editingFile.path, content: contentToSave })
       });
       if (res.ok) {
         setEditingFile(null);
         fetchFiles(currentPath);
+        setOperationToast({
+          type: 'success',
+          text: lang === 'fa' ? 'فایل با موفقیت ذخیره شد.' : 'File saved successfully.'
+        });
+        setTimeout(() => setOperationToast(null), 3000);
+      } else {
+        const data = await res.json();
+        alert(data.error || (lang === 'fa' ? 'خطا در ذخیره فایل' : 'Failed to save file'));
       }
-    } catch (e) {
-      alert('Failed to save file');
+    } catch (e: any) {
+      alert(e.message || (lang === 'fa' ? 'خطا در ذخیره فایل' : 'Failed to save file'));
+    }
+  };
+
+  const handleStartCompress = (paths: string[], defaultName?: string) => {
+    if (paths.length === 0) return;
+    let name = defaultName;
+    if (!name) {
+      if (paths.length === 1) {
+        const singleName = paths[0].split('/').pop() || 'archive';
+        name = singleName.includes('.') ? `${singleName.split('.')[0]}.zip` : `${singleName}.zip`;
+      } else {
+        name = 'archive.zip';
+      }
+    }
+    const lowerName = name.toLowerCase();
+    const initialFormat: 'zip' | '7z' | 'rar' | 'tar.gz' = lowerName.endsWith('.7z')
+      ? '7z'
+      : lowerName.endsWith('.rar')
+      ? 'rar'
+      : (lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tgz'))
+      ? 'tar.gz'
+      : 'zip';
+
+    setCompressModal({
+      paths,
+      defaultName: name,
+      format: initialFormat
+    });
+  };
+
+  const handleConfirmCompress = async () => {
+    if (!compressModal || !compressModal.defaultName.trim()) return;
+    setIsCompressing(true);
+    try {
+      let zipName = compressModal.defaultName.trim();
+      if (compressModal.format === 'zip' && !zipName.endsWith('.zip')) {
+        zipName += '.zip';
+      } else if (compressModal.format === '7z' && !zipName.endsWith('.7z')) {
+        zipName += '.7z';
+      } else if (compressModal.format === 'rar' && !zipName.endsWith('.rar')) {
+        zipName += '.rar';
+      } else if (compressModal.format === 'tar.gz' && !zipName.endsWith('.tar.gz') && !zipName.endsWith('.tgz')) {
+        zipName += '.tar.gz';
+      }
+
+      const cleanDir = currentPath.endsWith('/') && currentPath.length > 1 
+        ? currentPath.slice(0, -1) 
+        : currentPath;
+      const targetZipPath = `${cleanDir}/${zipName}`;
+
+      const res = await fetch('/api/files/compress', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({
+          paths: compressModal.paths,
+          targetZipPath,
+          format: compressModal.format,
+          password: compressModal.password?.trim() || undefined
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCompressModal(null);
+        setSelectedPaths([]);
+        await fetchFiles(currentPath);
+        setTimeout(() => fetchFiles(currentPath), 300);
+        setOperationToast({
+          type: 'success',
+          text: lang === 'fa' ? `فایل ${zipName} با موفقیت فشرده شد.` : `Archive ${zipName} created successfully.`
+        });
+        setTimeout(() => setOperationToast(null), 3000);
+      } else {
+        alert(data.error || (lang === 'fa' ? 'خطا در فشرده‌سازی فایل‌ها' : 'Failed to compress files'));
+      }
+    } catch (e: any) {
+      alert(e.message || (lang === 'fa' ? 'خطا در ارسال درخواست' : 'Request error'));
+    } finally {
+      setIsCompressing(false);
+    }
+  };
+
+  const handleStartExtract = (archivePath: string) => {
+    setExtractModal({
+      archivePath,
+      destDir: currentPath
+    });
+  };
+
+  const handleConfirmExtract = async () => {
+    if (!extractModal || !extractModal.destDir.trim()) return;
+    setIsExtracting(true);
+    try {
+      const res = await fetch('/api/files/extract', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({
+          archivePath: extractModal.archivePath,
+          destinationDir: extractModal.destDir,
+          password: extractModal.password?.trim() || undefined
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setExtractModal(null);
+        await fetchFiles(currentPath);
+        setTimeout(() => fetchFiles(currentPath), 300);
+        setOperationToast({
+          type: 'success',
+          text: lang === 'fa' ? 'فایل فشرده با موفقیت استخراج شد.' : 'Archive extracted successfully.'
+        });
+        setTimeout(() => setOperationToast(null), 3000);
+      } else {
+        alert(data.error || (lang === 'fa' ? 'خطا در استخراج فایل' : 'Failed to extract archive'));
+      }
+    } catch (e: any) {
+      alert(e.message || (lang === 'fa' ? 'خطا در ارسال درخواست' : 'Request error'));
+    } finally {
+      setIsExtracting(false);
     }
   };
 
@@ -648,21 +870,91 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
     }
   };
 
-  const handleDelete = async (itemPath: string) => {
-    if (!confirm(t.confirmDelete)) return;
+  const handleDelete = (itemPath: string) => {
+    const targetItem = items.find(i => i.path === itemPath);
+    const itemName = itemPath.split('/').pop() || itemPath;
+    setDeleteModal({
+      isOpen: true,
+      type: 'single',
+      path: itemPath,
+      itemName,
+      itemType: targetItem?.isDirectory ? (lang === 'fa' ? 'پوشه' : 'Folder') : (lang === 'fa' ? 'فایل' : 'File')
+    });
+  };
+
+  const confirmExecuteDelete = async () => {
+    if (!deleteModal.type) return;
+    setIsDeleting(true);
     try {
-      await fetch('/api/files/delete', {
+      if (deleteModal.type === 'single' && deleteModal.path) {
+        const res = await fetch('/api/files/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          },
+          body: JSON.stringify({ itemPath: deleteModal.path })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.trashId) {
+          setUndoToast({
+            id: data.trashId,
+            trashIds: [data.trashId],
+            message: lang === 'fa' ? `«${deleteModal.itemName}» حذف شد` : `'${deleteModal.itemName}' deleted`,
+            subMessage: deleteModal.path
+          });
+        }
+        fetchFiles(currentPath);
+      } else if (deleteModal.type === 'bulk' && selectedPaths.length > 0) {
+        const collectedTrashIds: string[] = [];
+        for (const itemPath of selectedPaths) {
+          const res = await fetch('/api/files/delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-auth-token': token || ''
+            },
+            body: JSON.stringify({ itemPath })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.trashId) {
+            collectedTrashIds.push(data.trashId);
+          }
+        }
+        setSelectedPaths([]);
+        fetchFiles(currentPath);
+        if (collectedTrashIds.length > 0) {
+          setUndoToast({
+            id: 'bulk_' + Date.now(),
+            trashIds: collectedTrashIds,
+            message: lang === 'fa' ? `${collectedTrashIds.length} مورد با موفقیت حذف شد` : `${collectedTrashIds.length} items deleted`
+          });
+        }
+      }
+    } catch (e: any) {
+      setOperationToast({
+        type: 'error',
+        text: e.message || (lang === 'fa' ? 'خطا در اجرای درخواست حذف' : 'Failed to execute delete')
+      });
+      setTimeout(() => setOperationToast(null), 3000);
+    } finally {
+      setIsDeleting(false);
+      setDeleteModal({ isOpen: false, type: null });
+    }
+  };
+
+  const handleRestoreFromUndo = async (trashIds: string[]) => {
+    for (const tid of trashIds) {
+      await fetch('/api/files/restore', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-auth-token': token || ''
         },
-        body: JSON.stringify({ itemPath })
+        body: JSON.stringify({ trashId: tid })
       });
-      fetchFiles(currentPath);
-    } catch (e) {
-      alert('Failed to delete item');
     }
+    fetchFiles(currentPath);
   };
 
   const handleChmodSave = async () => {
@@ -807,6 +1099,64 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
         </div>
       </div>
 
+      {/* Search and Quick Filter Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+        <div className="relative flex-1">
+          <div className="absolute inset-y-0 start-0 flex items-center ps-3 pointer-events-none text-neutral-400">
+            <Search className="h-4 w-4" />
+          </div>
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder={t.searchFiles || 'Search files and folders...'}
+            className="w-full ps-9 pe-9 py-2 rounded-xl text-xs bg-white dark:bg-[#121214] border border-neutral-300 dark:border-white/10 text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition shadow-sm"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              title={t.clearSearch || 'Clear search'}
+              className="absolute inset-y-0 end-0 flex items-center pe-3 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 self-end sm:self-center text-xs text-neutral-500 dark:text-neutral-400 font-mono shrink-0">
+          {searchTerm ? (
+            <span className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-[11px] font-medium flex items-center gap-1.5">
+              <span>{filteredItems.length} / {items.length}</span>
+              <span>{lang === 'fa' ? 'یافت شد' : 'found'}</span>
+            </span>
+          ) : (
+            <span className="px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-400 text-[11px]">
+              {items.length} {lang === 'fa' ? 'مورد' : 'items'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Operation Toast Notification */}
+      {operationToast && (
+        <div className={`p-2.5 sm:p-3 rounded-xl border text-xs font-semibold flex items-center justify-between gap-2 shadow-lg transition-all animate-fadeIn ${
+          operationToast.type === 'success' 
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500 dark:text-emerald-400' 
+            : 'bg-rose-500/10 border-rose-500/30 text-rose-500 dark:text-rose-400'
+        }`}>
+          <div className="flex items-center gap-2">
+            {operationToast.type === 'success' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
+            <span>{operationToast.text}</span>
+          </div>
+          <button 
+            onClick={() => setOperationToast(null)} 
+            className="p-1 hover:opacity-75 rounded transition cursor-pointer"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Upload Status Alert Bar */}
       {uploadStatus && (
         <div className="p-2.5 sm:p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium flex items-center gap-2 animate-pulse">
@@ -821,13 +1171,21 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
           <div className="text-[11px] sm:text-xs font-semibold text-center sm:text-left">
             {t.selectedCount ? t.selectedCount.replace('{count}', String(selectedPaths.length)) : `${selectedPaths.length} selected`}
           </div>
-          <div className="flex items-center justify-center gap-1.5 sm:gap-2">
+          <div className="flex items-center justify-center flex-wrap gap-1.5 sm:gap-2">
             <button
               onClick={() => setSelectedPaths([])}
               className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold bg-neutral-700 hover:bg-neutral-600 dark:bg-neutral-600 dark:hover:bg-neutral-500 transition flex items-center justify-center gap-1 cursor-pointer"
             >
               <X className="h-3.5 w-3.5" />
-              <span>{t.deselectAll || 'لغو انتخاب'}</span>
+              <span>{t.deselectAll || 'لغو'}</span>
+            </button>
+            <button
+              onClick={() => handleStartCompress(selectedPaths)}
+              className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold bg-amber-600 hover:bg-amber-500 transition flex items-center justify-center gap-1 cursor-pointer"
+              title={t.compressSelected || 'فشرده‌سازی'}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              <span>{t.compressSelected || 'فشرده‌سازی'}</span>
             </button>
             <button
               onClick={handleBulkDownload}
@@ -876,7 +1234,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                 <th className="p-2.5 sm:p-3.5 w-8 sm:w-10 sticky top-0 bg-neutral-100 dark:bg-[#1a1a1c] z-10">
                   <input
                     type="checkbox"
-                    checked={items.length > 0 && selectedPaths.length === items.length}
+                    checked={filteredItems.length > 0 && filteredItems.every(i => selectedPaths.includes(i.path))}
                     onChange={handleToggleSelectAll}
                     className="rounded border-neutral-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
@@ -889,7 +1247,46 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100 dark:divide-white/5">
-              {items.map((item) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="p-10 text-center text-neutral-500 dark:text-neutral-400">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <RefreshCw className="h-6 w-6 animate-spin text-blue-500" />
+                      <span className="text-xs">{lang === 'fa' ? 'در حال بارگذاری فایل‌ها...' : 'Loading files...'}</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredItems.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-10 text-center text-neutral-500 dark:text-neutral-400">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      {searchTerm ? (
+                        <>
+                          <Search className="h-8 w-8 text-neutral-400 opacity-60" />
+                          <p className="text-xs font-semibold text-neutral-800 dark:text-neutral-200">
+                            {t.noMatchingFiles || 'No matching files or folders found.'}
+                          </p>
+                          <p className="text-[11px] text-neutral-400 font-mono">"{searchTerm}"</p>
+                          <button
+                            onClick={() => setSearchTerm('')}
+                            className="mt-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-neutral-100 dark:bg-white/10 hover:bg-neutral-200 dark:hover:bg-white/15 text-neutral-700 dark:text-neutral-200 transition cursor-pointer"
+                          >
+                            {t.clearSearch || 'Clear search'}
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <Folder className="h-8 w-8 text-neutral-400 opacity-60" />
+                          <p className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                            {t.noFilesFound || 'This folder is empty.'}
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredItems.map((item) => (
                 <tr
                   key={item.path}
                   className={`hover:bg-neutral-50/80 dark:hover:bg-white/5 transition group ${
@@ -911,7 +1308,9 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                     >
                       {item.isDirectory ? (
                         <FolderOpen className="h-4 w-4 text-amber-500 shrink-0" />
-                      ) : item.name.endsWith('.sh') || item.name.endsWith('.py') || item.name.endsWith('.js') ? (
+                      ) : isArchiveFile(item.name) ? (
+                        <FileArchive className="h-4 w-4 text-amber-400 shrink-0" />
+                      ) : item.name.endsWith('.sh') || item.name.endsWith('.py') || item.name.endsWith('.js') || item.name.endsWith('.ts') ? (
                         <FileCode className="h-4 w-4 text-emerald-500 shrink-0" />
                       ) : (
                         <FileText className="h-4 w-4 text-neutral-400 shrink-0" />
@@ -930,29 +1329,61 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                   </td>
                   <td className="p-2.5 sm:p-3.5 text-right">
                     <div className="flex items-center justify-end gap-1 sm:gap-1.5 opacity-90">
-                      {!item.isDirectory && (
+                      {!item.isDirectory && !isArchiveFile(item.name) && (
                         <button
                           onClick={() => handleOpenFile(item)}
-                          className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-blue-400 transition"
+                          className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-blue-400 transition cursor-pointer"
                           title={t.edit}
                         >
                           <Edit className="h-3.5 w-3.5" />
                         </button>
                       )}
 
-                      <a
-                        href={`/api/files/download?path=${encodeURIComponent(item.path)}&token=${encodeURIComponent(token || '')}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-emerald-400 transition"
+                      {/* Inspect & Extract buttons for archive files */}
+                      {isArchiveFile(item.name) && (
+                        <>
+                          <button
+                            onClick={() => setArchiveViewerPath(item.path)}
+                            className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-amber-400 transition cursor-pointer"
+                            title={lang === 'fa' ? 'مشاهده محتویات فایل فشرده (WinRAR)' : 'Inspect Archive'}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleStartExtract(item.path)}
+                            className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-amber-500 transition cursor-pointer"
+                            title={t.extract || 'استخراج فایل (Unzip)'}
+                          >
+                            <FolderDown className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+
+                      {/* Compress button (only for non-archive or directories) */}
+                      {!isArchiveFile(item.name) && (
+                        <button
+                          onClick={() => handleStartCompress([item.path], item.isDirectory ? `${item.name}.zip` : `${item.name.replace(/\.[^/.]+$/, "")}.zip`)}
+                          className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-amber-500 transition cursor-pointer"
+                          title={t.compress || 'فشرده‌سازی (Zip)'}
+                        >
+                          <Archive className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadFile(item);
+                        }}
+                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-emerald-400 transition cursor-pointer"
                         title={t.download}
                       >
                         <Download className="h-3.5 w-3.5" />
-                      </a>
+                      </button>
 
                       <button
                         onClick={() => setChmodItem({ path: item.path, mode: item.permissions })}
-                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-amber-400 transition hidden sm:inline-flex"
+                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-amber-400 transition hidden sm:inline-flex cursor-pointer"
                         title={t.changePerms}
                       >
                         <Key className="h-3.5 w-3.5" />
@@ -960,7 +1391,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
                       <button
                         onClick={() => setRenameItem({ oldPath: item.path, newName: item.name })}
-                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-purple-400 transition"
+                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-purple-400 transition cursor-pointer"
                         title={t.rename}
                       >
                         <File className="h-3.5 w-3.5" />
@@ -968,7 +1399,7 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
 
                       <button
                         onClick={() => handleDelete(item.path)}
-                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-rose-400 transition"
+                        className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-white/10 text-rose-400 transition cursor-pointer"
                         title={t.delete}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -976,43 +1407,269 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
                     </div>
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Code Editor Modal */}
+      {/* Advanced Code Editor Modal */}
       {editingFile && (
+        <AdvancedCodeEditor
+          filePath={editingFile.path}
+          initialContent={editingFile.content || ''}
+          onSave={handleSaveFile}
+          onClose={() => setEditingFile(null)}
+          lang={lang}
+        />
+      )}
+
+      {/* Compress (Zip / Tar.gz) Modal */}
+      {compressModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-neutral-800 dark:text-neutral-200 flex items-center gap-2 font-mono">
-                <FileCode className="h-4 w-4 text-emerald-500" />
-                <span>{editingFile.path}</span>
-              </h3>
-              <div className="flex items-center gap-2">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 w-full max-w-md p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
+              <Archive className="h-5 w-5 text-amber-500" />
+              <span>{t.compress || 'فشرده‌سازی فایل‌ها'}</span>
+            </h3>
+
+            <div className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800/60 p-3 rounded-xl max-h-28 overflow-y-auto font-mono">
+              <p className="font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+                {lang === 'fa' ? 'موارد انتخابی برای فشرده‌سازی:' : 'Items to compress:'}
+              </p>
+              <ul className="list-disc list-inside space-y-0.5">
+                {compressModal.paths.map(p => (
+                  <li key={p} className="truncate">{p.split('/').pop()}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                {t.archiveName || 'نام فایل فشرده:'}
+              </label>
+              <input
+                type="text"
+                autoFocus
+                value={compressModal.defaultName}
+                onChange={(e) => setCompressModal({ ...compressModal, defaultName: e.target.value })}
+                placeholder="archive.zip"
+                className="w-full mt-1.5 px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-sm font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-amber-500/50"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                {lang === 'fa' ? 'فرمت فشرده‌سازی:' : 'Compression Format:'}
+              </label>
+              <div className="grid grid-cols-2 gap-2 mt-1.5">
                 <button
-                  onClick={handleSaveFile}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 transition flex items-center gap-1.5 cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    const baseName = compressModal.defaultName.replace(/\.(zip|7z|rar|tar\.gz|tgz|tar)$/i, '');
+                    setCompressModal({
+                      ...compressModal,
+                      format: 'zip',
+                      defaultName: `${baseName}.zip`
+                    });
+                  }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                    compressModal.format === 'zip'
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
                 >
-                  <Save className="h-3.5 w-3.5" />
-                  <span>{t.saveFile}</span>
+                  <FileArchive className="h-4 w-4" />
+                  <span>ZIP (.zip)</span>
                 </button>
                 <button
-                  onClick={() => setEditingFile(null)}
-                  className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 transition cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    const baseName = compressModal.defaultName.replace(/\.(zip|7z|rar|tar\.gz|tgz|tar)$/i, '');
+                    setCompressModal({
+                      ...compressModal,
+                      format: '7z',
+                      defaultName: `${baseName}.7z`
+                    });
+                  }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                    compressModal.format === '7z'
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
                 >
-                  <X className="h-4 w-4" />
+                  <FileArchive className="h-4 w-4 text-emerald-500" />
+                  <span>7-Zip (.7z)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const baseName = compressModal.defaultName.replace(/\.(zip|7z|rar|tar\.gz|tgz|tar)$/i, '');
+                    setCompressModal({
+                      ...compressModal,
+                      format: 'rar',
+                      defaultName: `${baseName}.rar`
+                    });
+                  }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                    compressModal.format === 'rar'
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  <Archive className="h-4 w-4 text-purple-500" />
+                  <span>RAR (.rar)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const baseName = compressModal.defaultName.replace(/\.(zip|7z|rar|tar\.gz|tgz|tar)$/i, '');
+                    setCompressModal({
+                      ...compressModal,
+                      format: 'tar.gz',
+                      defaultName: `${baseName}.tar.gz`
+                    });
+                  }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                    compressModal.format === 'tar.gz'
+                      ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  }`}
+                >
+                  <Archive className="h-4 w-4" />
+                  <span>TAR GZ (.tar.gz)</span>
                 </button>
               </div>
             </div>
-            <textarea
-              value={editingFile.content || ''}
-              onChange={(e) => setEditingFile({ ...editingFile, content: e.target.value })}
-              className="w-full flex-1 p-4 font-mono text-xs bg-neutral-950 text-neutral-100 border-none outline-none resize-none leading-relaxed"
-              rows={20}
-            />
+
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                  <Lock className="h-3.5 w-3.5 text-amber-500" />
+                  <span>{t.archivePassword || 'رمز عبور آرشیو (اختیاری):'}</span>
+                </label>
+              </div>
+              <div className="relative mt-1.5">
+                <input
+                  type={compressModal.showPassword ? 'text' : 'password'}
+                  value={compressModal.password || ''}
+                  onChange={(e) => setCompressModal({ ...compressModal, password: e.target.value })}
+                  placeholder={t.archivePasswordPlaceholder || 'برای قفل کردن فایل‌ها رمز وارد کنید...'}
+                  className="w-full pl-10 pr-3 rtl:pr-10 rtl:pl-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-amber-500/50 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCompressModal({ ...compressModal, showPassword: !compressModal.showPassword })}
+                  className="absolute inset-y-0 left-0 rtl:left-auto rtl:right-0 flex items-center px-3 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {compressModal.showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {compressModal.password && (
+                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span>{t.archivePasswordHelp || 'آرشیو به صورت محافظت‌شده با رمز عبور فشرده خواهد شد.'}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCompressModal(null)}
+                disabled={isCompressing}
+                className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCompress}
+                disabled={isCompressing || !compressModal.defaultName.trim()}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+              >
+                {isCompressing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+                <span>{isCompressing ? (t.compressing || 'در حال فشرده‌سازی...') : (t.compress || 'فشرده‌سازی')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Extract (Unzip / Untar) Modal */}
+      {extractModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 w-full max-w-md p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-neutral-900 dark:text-neutral-100 flex items-center gap-2">
+              <FolderDown className="h-5 w-5 text-amber-500" />
+              <span>{t.extract || 'استخراج فایل فشرده'}</span>
+            </h3>
+
+            <div className="text-xs text-neutral-600 dark:text-neutral-300 bg-neutral-100 dark:bg-neutral-800/60 p-3 rounded-xl font-mono">
+              <p className="text-[11px] text-neutral-400 mb-1">{lang === 'fa' ? 'فایل فشرده انتخاب‌شده:' : 'Selected Archive:'}</p>
+              <p className="font-semibold text-amber-500 break-all">{extractModal.archivePath}</p>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                {t.destinationDir || 'پوشه مقصد استخراج:'}
+              </label>
+              <input
+                type="text"
+                value={extractModal.destDir}
+                onChange={(e) => setExtractModal({ ...extractModal, destDir: e.target.value })}
+                placeholder={currentPath || '/'}
+                className="w-full mt-1.5 px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-sm font-mono text-neutral-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-amber-500/50"
+              />
+              <p className="text-[11px] text-neutral-400 mt-1">
+                {lang === 'fa' ? 'پیش‌فرض: پوشه جاری فعلی شما' : 'Default: Current working directory'}
+              </p>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                <Lock className="h-3.5 w-3.5 text-amber-500" />
+                <span>{t.extractPassword || 'رمز عبور فایل فشرده (در صورت قفل بودن):'}</span>
+              </label>
+              <div className="relative mt-1.5">
+                <input
+                  type={extractModal.showPassword ? 'text' : 'password'}
+                  value={extractModal.password || ''}
+                  onChange={(e) => setExtractModal({ ...extractModal, password: e.target.value })}
+                  placeholder={t.extractPasswordPlaceholder || 'رمز فایل فشرده را وارد کنید...'}
+                  className="w-full pl-10 pr-3 rtl:pr-10 rtl:pl-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-sm text-neutral-900 dark:text-neutral-100 outline-none focus:ring-2 focus:ring-amber-500/50 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setExtractModal({ ...extractModal, showPassword: !extractModal.showPassword })}
+                  className="absolute inset-y-0 left-0 rtl:left-auto rtl:right-0 flex items-center px-3 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {extractModal.showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setExtractModal(null)}
+                disabled={isExtracting}
+                className="px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition cursor-pointer"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmExtract}
+                disabled={isExtracting || !extractModal.destDir.trim()}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+              >
+                {isExtracting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FolderDown className="h-4 w-4" />}
+                <span>{isExtracting ? (t.extracting || 'در حال استخراج...') : (t.extract || 'استخراج')}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1692,6 +2349,24 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
         </div>
       )}
 
+      {/* Custom Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => setDeleteModal({ isOpen: false, type: null })}
+        onConfirm={confirmExecuteDelete}
+        isLoading={isDeleting}
+        lang={lang}
+        itemName={deleteModal.itemName}
+        itemType={deleteModal.itemType}
+        count={deleteModal.count}
+        title={lang === 'fa' ? 'تایید نهایی حذف فایل یا پوشه' : 'Confirm File Deletion'}
+        description={
+          deleteModal.type === 'bulk'
+            ? (lang === 'fa' ? `آیا از حذف ${deleteModal.count} مورد انتخاب‌شده اطمینان دارید؟ این عملیات غیرقابل بازگشت است.` : `Are you sure you want to delete ${deleteModal.count} selected items? This action cannot be undone.`)
+            : (lang === 'fa' ? 'آیا از حذف این مورد اطمینان دارید؟ تمامی محتوا برای همیشه پاک خواهد شد.' : 'Are you sure you want to delete this item? All content will be permanently removed.')
+        }
+      />
+
       {/* Direct File Uploader Modal */}
       <DirectFileUploadModal
         token={token}
@@ -1700,6 +2375,35 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
         onClose={() => setIsDirectUploadModalOpen(false)}
         onSuccess={() => fetchFiles(currentPath)}
         currentPath={currentPath}
+      />
+
+      {/* Undo Toast Notification */}
+      {undoToast && (
+        <UndoToast
+          key={undoToast.id}
+          id={undoToast.id}
+          message={undoToast.message}
+          subMessage={undoToast.subMessage}
+          lang={lang}
+          onUndo={() => handleRestoreFromUndo(undoToast.trashIds)}
+          onClose={() => setUndoToast(null)}
+        />
+      )}
+
+      {/* Archive Viewer / WinRAR Explorer Modal */}
+      <ArchiveViewerModal
+        isOpen={!!archiveViewerPath}
+        archivePath={archiveViewerPath}
+        currentDir={currentPath}
+        token={token || ''}
+        lang={lang}
+        onClose={() => setArchiveViewerPath(null)}
+        onExtractionSuccess={(_dest) => {
+          fetchFiles(currentPath);
+        }}
+        onArchiveUpdated={() => {
+          fetchFiles(currentPath);
+        }}
       />
     </div>
   );
