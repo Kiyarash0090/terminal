@@ -85,7 +85,7 @@ async def main():
             return
         try:
             idx = int(sys.argv[2])
-            ok, msg = vpn.set_active(idx)
+            ok, msg = await vpn.set_active(idx)
             print(json.dumps({"success": ok, "message": msg}))
         except Exception as e:
             print(json.dumps({"error": str(e)}))
@@ -129,6 +129,15 @@ async def main():
                     "output": r[3]
                 })
             print(json.dumps({"results": formatted}))
+
+    elif cmd == "logs":
+        max_lines = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 300
+        logs = vpn.get_logs(max_lines)
+        print(json.dumps({"logs": logs, "running": vpn.is_running()}))
+
+    elif cmd == "clear-logs":
+        ok = vpn.clear_logs()
+        print(json.dumps({"success": ok}))
 
     else:
         print(json.dumps({"error": f"Unknown command: {cmd}"}))

@@ -311,16 +311,18 @@ class VPNManager:
                     pass
 
     async def _measure_ping(self, proxy_port: int) -> Optional[float]:
-        """پینگ TTFB از طریق پروکسی"""
+        """پینگ TTFB از طریق پروکسی با socks5-hostname"""
         for target in [
+            "https://www.google.com/generate_204",
             "http://www.gstatic.com/generate_204",
             "http://connectivitycheck.gstatic.com/generate_204",
-            "http://1.1.1.1/cdn-cgi/trace",
+            "https://1.1.1.1/cdn-cgi/trace",
+            "https://httpbin.org/ip",
         ]:
             try:
                 p = await asyncio.create_subprocess_exec(
                     "curl", "-s", "-o", "/dev/null", "-w", "%{time_starttransfer}",
-                    "--socks5", f"127.0.0.1:{proxy_port}",
+                    "--socks5-hostname", f"127.0.0.1:{proxy_port}",
                     "--connect-timeout", "3", "--max-time", "4", target,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
@@ -328,7 +330,7 @@ class VPNManager:
                 val = out.decode().strip()
                 if val:
                     ms = round(float(val) * 1000, 1)
-                    if ms >= 5.0:
+                    if ms >= 1.0:
                         return ms
             except Exception:
                 pass
@@ -339,7 +341,7 @@ class VPNManager:
         try:
             p = await asyncio.create_subprocess_exec(
                 "curl", "-s", "-o", "/dev/null", "-w", "%{speed_download}",
-                "--socks5", f"127.0.0.1:{proxy_port}",
+                "--socks5-hostname", f"127.0.0.1:{proxy_port}",
                 "--connect-timeout", "4", "--max-time", "6",
                 "https://speed.cloudflare.com/__down?bytes=1000000",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -362,7 +364,7 @@ class VPNManager:
                 f.write(os.urandom(256 * 1024))
             p = await asyncio.create_subprocess_exec(
                 "curl", "-s", "-o", "/dev/null", "-w", "%{speed_upload}",
-                "--socks5", f"127.0.0.1:{proxy_port}",
+                "--socks5-hostname", f"127.0.0.1:{proxy_port}",
                 "--connect-timeout", "4", "--max-time", "6",
                 "-X", "POST",
                 "--data-binary", f"@{tmp}",
@@ -628,6 +630,29 @@ class VPNManager:
             f"📋 تعداد کانفیگ‌ها: {configs_count}"
         )
 
+    def get_logs(self, max_lines: int = 300) -> List[str]:
+        """خواندن آخرین خطوط لاگ xray/v2ray"""
+        log_path = CONFIGS_DIR / "xray.log"
+        if not log_path.exists():
+            return []
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                return [line.rstrip("\r\n") for line in lines[-max_lines:]]
+        except Exception as e:
+            return [f"Error reading log: {e}"]
+
+    def clear_logs(self) -> bool:
+        """پاکسازی فایل لاگ xray/v2ray"""
+        log_path = CONFIGS_DIR / "xray.log"
+        try:
+            if log_path.exists():
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write("")
+            return True
+        except Exception:
+            return False
+
 
     # ------------------------------------------------------------------
     # پارسر کانفیگ
@@ -719,29 +744,57 @@ class VPNManager:
             params = parse_qs(parsed.query)
             net = params.get("type", ["tcp"])[0]
             security = params.get("security", ["none"])[0]
-            sni = params.get("sni", [address])[0]
+            sni = params.get("sni", [""])[0]
             path = unquote(params.get("path", ["/"])[0])
-            host = params.get("host", [address])[0]
+            host = params.get("host", [""])[0]
             flow = params.get("flow", [""])[0]
+            fp = params.get("fp", ["chrome"])[0]
+            encryption = params.get("encryption", ["none"])[0]
+            alpn = params.get("alpn", [""])[0]
 
             stream_settings: dict = {"network": net}
             if net == "ws":
-                stream_settings["wsSettings"] = {"path": path, "headers": {"Host": host}}
+                ws_headers = {}
+                if host or sni:
+                    ws_headers["Host"] = host or sni
+                stream_settings["wsSettings"] = {
+                    "path": path if path.startswith("/") else f"/{path}",
+                    "headers": ws_headers
+                }
             elif net == "grpc":
-                stream_settings["grpcSettings"] = {"serviceName": params.get("serviceName", [""])[0]}
+                stream_settings["grpcSettings"] = {
+                    "serviceName": params.get("serviceName", [""])[0]
+                }
+            elif net in ("xhttp", "splithttp"):
+                stream_settings["xhttpSettings"] = {
+                    "path": path if path.startswith("/") else f"/{path}",
+                    "host": host or sni or address
+                }
+
             if security == "tls":
                 stream_settings["security"] = "tls"
-                stream_settings["tlsSettings"] = {"serverName": sni}
+                server_name = sni or host or address
+                tls_settings: dict = {
+                    "serverName": server_name,
+                    "fingerprint": fp or "chrome"
+                }
+                if alpn:
+                    tls_settings["alpn"] = [a.strip() for a in alpn.split(",") if a.strip()]
+                stream_settings["tlsSettings"] = tls_settings
             elif security == "reality":
                 stream_settings["security"] = "reality"
                 stream_settings["realitySettings"] = {
-                    "serverName": sni,
-                    "fingerprint": params.get("fp", ["chrome"])[0],
+                    "serverName": sni or host or address,
+                    "fingerprint": fp or "chrome",
                     "publicKey": params.get("pbk", [""])[0],
                     "shortId": params.get("sid", [""])[0],
+                    "spiderX": params.get("spx", ["/"])[0],
                 }
 
-            user: dict = {"id": uuid, "encryption": "none"}
+            user: dict = {
+                "id": uuid,
+                "encryption": encryption if encryption else "none"
+            }
             if flow:
                 user["flow"] = flow
 
@@ -849,9 +902,19 @@ class VPNManager:
                         "protocol": "socks",
                         "settings": {
                             "auth": "noauth",
-                            "udp": False,
+                            "udp": True,
                         },
                         "tag": "socks-in"
+                    },
+                    {
+                        "port": 1080,
+                        "listen": "127.0.0.1",
+                        "protocol": "socks",
+                        "settings": {
+                            "auth": "noauth",
+                            "udp": True,
+                        },
+                        "tag": "socks-in-alt"
                     },
                     {
                         "port": 10809,
@@ -899,7 +962,7 @@ class VPNManager:
         users: list,
         stream_settings: dict,
     ) -> dict:
-        """ساخت JSON کامل v2ray با SOCKS5 inbound روی localhost:10808"""
+        """ساخت JSON کامل v2ray با SOCKS5 inbound روی localhost:10808 و localhost:1080"""
         server_item: dict = {
             "address": address,
             "port": port,
@@ -921,9 +984,19 @@ class VPNManager:
                     "protocol": "socks",
                     "settings": {
                         "auth": "noauth",
-                        "udp": False,
+                        "udp": True,
                     },
                     "tag": "socks-in"
+                },
+                {
+                    "port": 1080,
+                    "listen": "127.0.0.1",
+                    "protocol": "socks",
+                    "settings": {
+                        "auth": "noauth",
+                        "udp": True,
+                    },
+                    "tag": "socks-in-alt"
                 },
                 {
                     "port": 10809,

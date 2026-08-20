@@ -1371,8 +1371,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             idx = int(data.replace("vpn_select_", ""))
             res = await express_api("POST", "/api/vpn/configs/select", {"index": idx})
             if res and res.get("success"):
+                msg = res.get("message", "✅ سرور با موفقیت انتخاب شد.")
                 try:
-                    await query.answer("✅ کانفیگ با موفقیت انتخاب شد.", show_alert=False)
+                    await query.answer(msg, show_alert=False)
                 except Exception:
                     pass
             else:
