@@ -222,13 +222,28 @@ class VPNManager:
             return configs[index]
         return None
 
-    def set_active(self, index: int) -> Tuple[bool, str]:
+    async def set_active(self, index: int) -> Tuple[bool, str]:
         configs = self._store["configs"]
         if index < 0 or index >= len(configs):
             return False, "❌ شماره کانفیگ معتبر نیست."
+
+        cfg_name = configs[index].get("name", f"Config {index + 1}")
+        was_running = self.is_running() or bool(self._store.get("enabled", False))
+
         self._store["active_index"] = index
         self._save_store()
-        return True, f"✅ کانفیگ «{configs[index]['name']}» به عنوان فعال انتخاب شد."
+
+        if was_running:
+            # خاموش کردن وی‌پی‌ان و روشن کردن مجدد با کانفیگ سرور جدید
+            await self.disable_vpn()
+            await asyncio.sleep(0.5)
+            ok, msg = await self.enable_vpn()
+            if ok:
+                return True, f"✅ سرور «{cfg_name}» انتخاب شد و VPN به‌صورت خودکار با سرور جدید راه‌اندازی و روشن گردید."
+            else:
+                return False, f"⚠️ سرور «{cfg_name}» انتخاب شد اما راه‌اندازی مجدد با سرور جدید با خطا مواجه شد:\n{msg}"
+
+        return True, f"✅ کانفیگ «{cfg_name}» به عنوان فعال انتخاب شد."
 
 
     # ------------------------------------------------------------------
@@ -548,14 +563,41 @@ class VPNManager:
             v2ray_bin = get_v2ray_bin()
             log_path = CONFIGS_DIR / "xray.log"
             log_file = open(log_path, "a", encoding="utf-8")
-            proc = subprocess.Popen(
-                [v2ray_bin, "run", "-config", str(cfg_path)],
-                stdout=log_file,
-                stderr=log_file,
-                start_new_session=True
-            )
+            
+            # Start Xray with standard JSON config
+            cmd_args = [v2ray_bin, "run", "-c", str(cfg_path), "--format", "json"]
+            try:
+                proc = subprocess.Popen(
+                    cmd_args,
+                    stdout=log_file,
+                    stderr=log_file,
+                    start_new_session=True
+                )
+            except Exception:
+                proc = subprocess.Popen(
+                    [v2ray_bin, "run", "-config", str(cfg_path)],
+                    stdout=log_file,
+                    stderr=log_file,
+                    start_new_session=True
+                )
+
             # صبر کوتاه تا بررسی کنیم crash نشده
             await asyncio.sleep(1.5)
+            if proc.poll() is not None:
+                log_file.close()
+                # Fallback to -config if --format json was rejected
+                try:
+                    log_file = open(log_path, "a", encoding="utf-8")
+                    proc = subprocess.Popen(
+                        [v2ray_bin, "run", "-config", str(cfg_path)],
+                        stdout=log_file,
+                        stderr=log_file,
+                        start_new_session=True
+                    )
+                    await asyncio.sleep(1.5)
+                except Exception:
+                    pass
+
             if proc.poll() is not None:
                 log_file.close()
                 err_text = ""
@@ -571,8 +613,9 @@ class VPNManager:
             self._save_store()
             return True, (
                 f"✅ VPN روشن شد با کانفیگ «{cfg['name']}» (PID: {proc.pid})\n"
-                f"🔌 SOCKS5 proxy: `127.0.0.1:10808`\n"
-                f"💡 همه دستورات به‌صورت خودکار از طریق VPN اجرا می‌شوند."
+                f"🔌 SOCKS5 proxy: `127.0.0.1:1080` (و `127.0.0.1:10808`)\n"
+                f"🔌 HTTP proxy: `127.0.0.1:10809` (و `127.0.0.1:1081`)\n"
+                f"💡 همه دستورات، yt-dlp و برنامه‌های پایتون به‌صورت مستقیم و بدون تداخل از VPN عبور می‌کنند."
             )
         except FileNotFoundError:
             return False, f"❌ {V2RAY_BIN} نصب نیست."
@@ -608,8 +651,8 @@ class VPNManager:
         if not process_alive:
             return False
 
-        # بررسی اینکه پورت SOCKS5 (10808) یا HTTP (10809) واقعاً listen هست
-        for port in [10808, 10809]:
+        # بررسی اینکه پورت‌های SOCKS5 یا HTTP واقعاً listen هستند
+        for port in [1080, 10808, 10809, 1081]:
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=1.5):
                     return True
@@ -717,7 +760,10 @@ class VPNManager:
                 }
             if tls:
                 stream_settings["security"] = "tls"
-                stream_settings["tlsSettings"] = {"serverName": host or server_addr}
+                stream_settings["tlsSettings"] = {
+                    "serverName": host or server_addr,
+                    "fingerprint": "chrome"
+                }
 
             return self._base_outbound_json(
                 protocol="vmess",
@@ -825,10 +871,13 @@ class VPNManager:
             stream_settings: dict = {
                 "network": net,
                 "security": "tls",
-                "tlsSettings": {"serverName": sni},
+                "tlsSettings": {
+                    "serverName": sni or host or address,
+                    "fingerprint": "chrome"
+                },
             }
             if net == "ws":
-                stream_settings["wsSettings"] = {"path": path, "headers": {"Host": host}}
+                stream_settings["wsSettings"] = {"path": path, "headers": {"Host": host or sni or address}}
 
             return self._base_outbound_json(
                 protocol="trojan",
@@ -897,16 +946,6 @@ class VPNManager:
                 "log": {"loglevel": "warning"},
                 "inbounds": [
                     {
-                        "port": 10808,
-                        "listen": "127.0.0.1",
-                        "protocol": "socks",
-                        "settings": {
-                            "auth": "noauth",
-                            "udp": True,
-                        },
-                        "tag": "socks-in"
-                    },
-                    {
                         "port": 1080,
                         "listen": "127.0.0.1",
                         "protocol": "socks",
@@ -914,14 +953,31 @@ class VPNManager:
                             "auth": "noauth",
                             "udp": True,
                         },
-                        "tag": "socks-in-alt"
+                        "tag": "socks-in-1080"
+                    },
+                    {
+                        "port": 10808,
+                        "listen": "127.0.0.1",
+                        "protocol": "socks",
+                        "settings": {
+                            "auth": "noauth",
+                            "udp": True,
+                        },
+                        "tag": "socks-in-10808"
                     },
                     {
                         "port": 10809,
                         "listen": "127.0.0.1",
                         "protocol": "http",
                         "settings": {},
-                        "tag": "http-in"
+                        "tag": "http-in-10809"
+                    },
+                    {
+                        "port": 1081,
+                        "listen": "127.0.0.1",
+                        "protocol": "http",
+                        "settings": {},
+                        "tag": "http-in-1081"
                     }
                 ],
                 "outbounds": [
@@ -979,16 +1035,6 @@ class VPNManager:
             "log": {"loglevel": "warning"},
             "inbounds": [
                 {
-                    "port": 10808,
-                    "listen": "127.0.0.1",
-                    "protocol": "socks",
-                    "settings": {
-                        "auth": "noauth",
-                        "udp": True,
-                    },
-                    "tag": "socks-in"
-                },
-                {
                     "port": 1080,
                     "listen": "127.0.0.1",
                     "protocol": "socks",
@@ -996,14 +1042,31 @@ class VPNManager:
                         "auth": "noauth",
                         "udp": True,
                     },
-                    "tag": "socks-in-alt"
+                    "tag": "socks-in-1080"
+                },
+                {
+                    "port": 10808,
+                    "listen": "127.0.0.1",
+                    "protocol": "socks",
+                    "settings": {
+                        "auth": "noauth",
+                        "udp": True,
+                    },
+                    "tag": "socks-in-10808"
                 },
                 {
                     "port": 10809,
                     "listen": "127.0.0.1",
                     "protocol": "http",
                     "settings": {},
-                    "tag": "http-in"
+                    "tag": "http-in-10809"
+                },
+                {
+                    "port": 1081,
+                    "listen": "127.0.0.1",
+                    "protocol": "http",
+                    "settings": {},
+                    "tag": "http-in-1081"
                 }
             ],
             "outbounds": [

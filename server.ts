@@ -3656,29 +3656,25 @@ async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Pr
 
   let finalCommand = command;
   if (vpnRunning) {
-    const proxyUrl = 'socks5://127.0.0.1:10808';
-    env.ALL_PROXY = proxyUrl;
-    env.all_proxy = proxyUrl;
-    env.HTTP_PROXY = proxyUrl;
-    env.HTTPS_PROXY = proxyUrl;
-    env.http_proxy = 'http://127.0.0.1:10809';
-    env.https_proxy = 'http://127.0.0.1:10809';
-    env.SOCKS_PROXY = proxyUrl;
-    env.socks_proxy = proxyUrl;
+    // Standard SOCKS5 (with remote DNS resolution via socks5h://) and HTTP proxies
+    const socksUrl = 'socks5h://127.0.0.1:1080';
+    const httpUrl = 'http://127.0.0.1:10809';
 
-    if (!finalCommand.trim().startsWith('proxychains')) {
-      try {
-        const { stdout: whichOut } = await execAsync('which proxychains4');
-        if (whichOut && whichOut.trim()) {
-          const confPath = path.join(TELEGRAM_BOT_DIR, 'proxychains.conf');
-          if (fs.existsSync(confPath)) {
-            finalCommand = `proxychains4 -f "${confPath}" -q ${command}`;
-          } else {
-            finalCommand = `proxychains4 -q ${command}`;
-          }
-        }
-      } catch {}
-    }
+    env.ALL_PROXY = socksUrl;
+    env.all_proxy = socksUrl;
+    env.HTTP_PROXY = httpUrl;
+    env.http_proxy = httpUrl;
+    env.HTTPS_PROXY = httpUrl;
+    env.https_proxy = httpUrl;
+    env.SOCKS_PROXY = socksUrl;
+    env.socks_proxy = socksUrl;
+    env.SOCKS5_PROXY = socksUrl;
+    env.socks5_proxy = socksUrl;
+
+    // Do NOT prepend proxychains4.
+    // Proxychains injects LD_PRELOAD hooks which destroy TLS fingerprints (JA3/JA4)
+    // and causes YouTube/Cloudflare bot detection blocks on yt-dlp, python, and curl.
+    // Clean environment variables allow native tools to route traffic transparently.
   }
 
   return { command: finalCommand, env };
@@ -3836,10 +3832,15 @@ app.get('/api/vpn/ip-check', async (req: Request, res: Response) => {
     }
 
     try {
-      const { stdout } = await execAsync('curl -s --socks5 127.0.0.1:10808 --max-time 5 https://ipinfo.io/json');
+      const { stdout } = await execAsync('curl -s --socks5-hostname 127.0.0.1:1080 --max-time 5 https://ipinfo.io/json');
       vpnIpInfo = JSON.parse(stdout.trim());
     } catch {
-      // vpn fail
+      try {
+        const { stdout } = await execAsync('curl -s --socks5-hostname 127.0.0.1:10808 --max-time 5 https://ipinfo.io/json');
+        vpnIpInfo = JSON.parse(stdout.trim());
+      } catch {
+        // vpn fail
+      }
     }
 
     res.json({
