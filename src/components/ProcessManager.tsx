@@ -77,7 +77,10 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
     }
     try {
       const res = await fetch('/api/processes/list', {
-        headers: { 'x-auth-token': token }
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'x-auth-token': token
+        }
       });
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
         const data = await res.json();
@@ -85,7 +88,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
         setSysProcesses(data.systemProcesses || []);
       }
     } catch (e) {
-      console.error('Failed to fetch processes:', e);
+      // silent network retry
     } finally {
       setLoading(false);
     }

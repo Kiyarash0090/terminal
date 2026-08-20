@@ -25,6 +25,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
     try {
       const res = await fetch('/api/metrics/live', {
         headers: {
+          'Authorization': `Bearer ${token}`,
           'x-auth-token': token || ''
         }
       });
@@ -36,7 +37,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
         }
       }
     } catch (e) {
-      console.error('Failed to fetch metrics:', e);
+      // silent network retry
     } finally {
       setLoading(false);
     }

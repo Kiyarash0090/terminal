@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Globe, Power, RefreshCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Globe, Power, RefreshCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X, Terminal, ChevronDown, ChevronUp, ScrollText, Download, Play, Pause, Search } from 'lucide-react';
 import { Language } from '../types';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { UndoToast } from './UndoToast';
@@ -94,6 +94,8 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
   const [ipData, setIpData] = useState<{ direct: IpInfo | null; vpn: IpInfo | null; proxyActive: boolean } | null>(null);
   const [checkingIp, setCheckingIp] = useState(false);
   const [copiedProxy, setCopiedProxy] = useState(false);
+  const [showQuickHelp, setShowQuickHelp] = useState(false);
+  const [copiedSnippetIndex, setCopiedSnippetIndex] = useState<number | null>(null);
   // Delete Modal state
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
@@ -105,6 +107,16 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
   }>({ isOpen: false, type: null });
   const [isDeleting, setIsDeleting] = useState(false);
   const [undoToast, setUndoToast] = useState<{ id: string; trashId: string; message: string } | null>(null);
+
+  // Xray / V2Ray Logs State
+  const [vpnLogs, setVpnLogs] = useState<string[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [autoRefreshLogs, setAutoRefreshLogs] = useState(true);
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [copiedLogs, setCopiedLogs] = useState(false);
+  const [showLogsCard, setShowLogsCard] = useState(true);
+  const [autoScrollLogs, setAutoScrollLogs] = useState(true);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
 
   const fetchStatus = async () => {
     if (!token) return;
@@ -175,15 +187,96 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     }
   };
 
+  const fetchVpnLogs = async (silent = false) => {
+    if (!token) return;
+    try {
+      if (!silent) setLogsLoading(true);
+      const res = await fetch('/api/vpn/logs?lines=300', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        setVpnLogs(data.logs || []);
+      }
+    } catch {
+      // silent
+    } finally {
+      if (!silent) setLogsLoading(false);
+    }
+  };
+
+  const handleClearVpnLogs = async () => {
+    if (!token) return;
+    try {
+      setLogsLoading(true);
+      const res = await fetch('/api/vpn/logs/clear', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        setVpnLogs([]);
+        setMessage({
+          text: isFa ? 'لاگ‌های xray/v2ray با موفقیت پاکسازی شدند' : 'Xray/V2Ray logs cleared successfully',
+          type: 'success'
+        });
+      }
+    } catch (err: any) {
+      setMessage({ text: err.message, type: 'error' });
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const handleCopyVpnLogs = () => {
+    const textToCopy = (logSearchQuery.trim() ? filteredLogs : vpnLogs).join('\n');
+    if (!textToCopy) return;
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedLogs(true);
+    setTimeout(() => setCopiedLogs(false), 2000);
+  };
+
+  const handleDownloadVpnLogs = () => {
+    const textToDownload = vpnLogs.join('\n');
+    const blob = new Blob([textToDownload], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `xray_v2ray_logs_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '_')}.log`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     fetchStatus();
     fetchConfigs();
     fetchIpInfo();
+    fetchVpnLogs();
     const interval = setInterval(() => {
       fetchStatus();
     }, 5000);
     return () => clearInterval(interval);
   }, [token]);
+
+  // Polling for Xray / V2Ray Logs
+  useEffect(() => {
+    if (!autoRefreshLogs || !token) return;
+    const interval = setInterval(() => {
+      fetchVpnLogs(true);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [autoRefreshLogs, token]);
+
+  // Auto scroll to bottom
+  useEffect(() => {
+    if (autoScrollLogs && logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+    }
+  }, [vpnLogs, autoScrollLogs]);
 
   const handleToggleVpn = async () => {
     try {
@@ -383,6 +476,11 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
         setMessage({ text: data.message, type: 'success' });
         fetchConfigs();
         fetchStatus();
+        setTimeout(() => {
+          fetchStatus();
+          fetchIpInfo();
+          fetchVpnLogs(true);
+        }, 1200);
       } else {
         setMessage({ text: data.error || data.message, type: 'error' });
       }
@@ -616,6 +714,28 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     setTimeout(() => setCopiedProxy(false), 2000);
   };
 
+  const filteredLogs = vpnLogs.filter(line => {
+    if (!logSearchQuery.trim()) return true;
+    return line.toLowerCase().includes(logSearchQuery.toLowerCase());
+  });
+
+  const getLogLineStyle = (line: string) => {
+    const lower = line.toLowerCase();
+    if (lower.includes('error') || lower.includes('failed') || lower.includes('fail') || lower.includes('rejected') || lower.includes('fatal') || lower.includes('panic')) {
+      return 'text-rose-400 font-medium';
+    }
+    if (lower.includes('warning') || lower.includes('warn') || lower.includes('timeout')) {
+      return 'text-amber-300';
+    }
+    if (lower.includes('started') || lower.includes('listening') || lower.includes('accepted') || lower.includes('success') || lower.includes('ok')) {
+      return 'text-emerald-400';
+    }
+    if (lower.includes('vless') || lower.includes('vmess') || lower.includes('trojan') || lower.includes('proxy') || lower.includes('socks')) {
+      return 'text-indigo-300';
+    }
+    return 'text-neutral-300';
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       {/* Alert Messages */}
@@ -808,6 +928,87 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
         </div>
       </div>
 
+      {/* Quick Terminal Proxy Snippets & Cheatsheet */}
+      <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3 sm:p-4 shadow-sm">
+        <button
+          onClick={() => setShowQuickHelp(prev => !prev)}
+          className="w-full flex items-center justify-between text-start cursor-pointer group"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 shrink-0">
+              <Terminal className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-xs sm:text-sm font-bold text-neutral-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate">
+                {isFa ? 'دستورات آماده ترمینال و متغیرهای پروکسی' : 'Quick Terminal Proxy Commands'}
+              </h4>
+              <p className="text-[10px] sm:text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                {isFa ? 'کپی سریع دستورات export، curl، pip و yt-dlp برای استفاده از پروکسی' : 'One-click copyable proxy snippets for terminal tools'}
+              </p>
+            </div>
+          </div>
+          <div className="text-neutral-400 group-hover:text-neutral-600 dark:group-hover:text-neutral-200 transition shrink-0 ml-2">
+            {showQuickHelp ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </div>
+        </button>
+
+        {showQuickHelp && (
+          <div className="mt-3 pt-3 border-t border-neutral-200 dark:border-white/10 space-y-2.5">
+            {[
+              {
+                title: isFa ? 'تنظیم متغیرهای محیطی در ترمینال (All Tools)' : 'Export Environment Variables',
+                cmd: 'export all_proxy="socks5://127.0.0.1:10808" http_proxy="socks5://127.0.0.1:10808" https_proxy="socks5://127.0.0.1:10808"'
+              },
+              {
+                title: isFa ? 'تست اتصال با Curl (Remote DNS)' : 'Curl Test (Remote DNS)',
+                cmd: 'curl -s --socks5-hostname 127.0.0.1:10808 https://httpbin.org/ip'
+              },
+              {
+                title: isFa ? 'دانلود ویدیو با yt-dlp از طریق پروکسی' : 'yt-dlp via Proxy',
+                cmd: 'yt-dlp --proxy "socks5://127.0.0.1:10808" "URL"'
+              },
+              {
+                title: isFa ? 'نصب پکیج پایتون با pip از طریق پروکسی' : 'pip install via Proxy',
+                cmd: 'pip install --proxy "socks5://127.0.0.1:10808" <package>'
+              },
+              {
+                title: isFa ? 'اجرای هر برنامه‌ای با Proxychains' : 'Run any CLI tool with Proxychains',
+                cmd: 'proxychains4 <command>'
+              }
+            ].map((item, idx) => (
+              <div
+                key={idx}
+                className="bg-neutral-50 dark:bg-black/40 border border-neutral-200 dark:border-white/5 rounded-lg p-2 sm:p-2.5 flex items-center justify-between gap-2 min-w-0"
+              >
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="text-[10px] font-semibold text-neutral-600 dark:text-neutral-400">
+                    {item.title}
+                  </div>
+                  <div className="text-[10px] sm:text-xs font-mono text-indigo-600 dark:text-indigo-400 truncate dir-ltr text-left">
+                    {item.cmd}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(item.cmd);
+                    setCopiedSnippetIndex(idx);
+                    setTimeout(() => setCopiedSnippetIndex(null), 1500);
+                  }}
+                  className="p-1.5 rounded-md hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-500 dark:text-neutral-400 transition cursor-pointer shrink-0"
+                  title={isFa ? 'کپی دستور' : 'Copy command'}
+                >
+                  {copiedSnippetIndex === idx ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Configs List Header & Controls */}
       <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-sm space-y-4 sm:space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
@@ -980,8 +1181,9 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                     {!isCurrentActive && (
                       <button
                         onClick={() => handleSelectConfig(cfg.index)}
-                        className="p-1.5 sm:p-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 rounded-lg sm:rounded-xl transition cursor-pointer border border-indigo-500/20 flex items-center justify-center"
-                        title={isFa ? 'انتخاب' : 'Select'}
+                        disabled={actionLoading}
+                        className="p-1.5 sm:p-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 rounded-lg sm:rounded-xl transition cursor-pointer border border-indigo-500/20 flex items-center justify-center disabled:opacity-50"
+                        title={isFa ? (status.running ? 'انتخاب و اتصال خودکار به این سرور' : 'انتخاب سرور') : (status.running ? 'Select & Reconnect' : 'Select')}
                       >
                         <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       </button>
@@ -998,6 +1200,221 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* Xray / V2Ray Live Logs Section */}
+      <div id="vpn-xray-logs-section" className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 shrink-0">
+              <ScrollText className="h-4 w-4 sm:h-5 sm:w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-white truncate">
+                  {isFa ? 'لاگ xray/v2ray' : 'Xray / V2Ray Logs'}
+                </h3>
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                    status.running
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                      : 'bg-neutral-100 dark:bg-white/5 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-white/10'
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${status.running ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-400'}`} />
+                  <span>{status.running ? (isFa ? 'سرویس فعال' : 'Active') : (isFa ? 'سرویس متوقف' : 'Stopped')}</span>
+                </span>
+                {vpnLogs.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-100 dark:bg-white/5 text-neutral-600 dark:text-neutral-400 font-mono">
+                    {filteredLogs.length} {isFa ? 'سطر' : 'lines'}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
+                {isFa ? 'مشاهده رویدادها، ترافیک عبوری و خطاهای احتمالی هسته Xray و V2Ray' : 'Real-time core events, connection logs and error trace'}
+              </p>
+            </div>
+          </div>
+
+          {/* Action Toolbar */}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end">
+            {/* Search filter */}
+            <div className="relative flex-1 sm:flex-initial min-w-[130px] sm:min-w-[180px]">
+              <Search className="h-3.5 w-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
+              <input
+                type="text"
+                value={logSearchQuery}
+                onChange={(e) => setLogSearchQuery(e.target.value)}
+                placeholder={isFa ? 'جستجو در لاگ‌ها...' : 'Filter logs...'}
+                className="w-full bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg pl-2.5 pr-8 py-1.5 text-[11px] sm:text-xs text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              {logSearchQuery && (
+                <button
+                  onClick={() => setLogSearchQuery('')}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Auto Refresh Live Stream Toggle */}
+            <button
+              onClick={() => setAutoRefreshLogs(prev => !prev)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium transition border cursor-pointer ${
+                autoRefreshLogs
+                  ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/30'
+                  : 'bg-neutral-100 dark:bg-white/5 text-neutral-600 dark:text-neutral-400 border-neutral-200 dark:border-white/10 hover:bg-neutral-200 dark:hover:bg-white/10'
+              }`}
+              title={autoRefreshLogs ? (isFa ? 'توقف بروزرسانی خودکار' : 'Pause live logs') : (isFa ? 'فعالسازی پخش زنده (هر ۳ ثانیه)' : 'Start live logs')}
+            >
+              {autoRefreshLogs ? <Pause className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> : <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
+              <span className="hidden sm:inline">{autoRefreshLogs ? (isFa ? 'زنده' : 'Live') : (isFa ? 'متوقف' : 'Paused')}</span>
+            </button>
+
+            {/* Manual Refresh */}
+            <button
+              onClick={() => fetchVpnLogs(false)}
+              disabled={logsLoading}
+              className="p-1.5 sm:p-2 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 rounded-lg transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-50"
+              title={isFa ? 'بروزرسانی لاگ‌ها' : 'Refresh logs'}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${logsLoading ? 'animate-spin text-indigo-500' : ''}`} />
+            </button>
+
+            {/* Copy Logs */}
+            <button
+              onClick={handleCopyVpnLogs}
+              disabled={vpnLogs.length === 0}
+              className="p-1.5 sm:p-2 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 rounded-lg transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
+              title={isFa ? 'کپی تمام لاگ‌ها' : 'Copy all logs'}
+            >
+              {copiedLogs ? <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-500" /> : <Copy className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+            </button>
+
+            {/* Download Logs */}
+            <button
+              onClick={handleDownloadVpnLogs}
+              disabled={vpnLogs.length === 0}
+              className="p-1.5 sm:p-2 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 rounded-lg transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
+              title={isFa ? 'دانلود فایل لاگ' : 'Download log file'}
+            >
+              <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            </button>
+
+            {/* Clear Logs */}
+            <button
+              onClick={handleClearVpnLogs}
+              disabled={logsLoading || vpnLogs.length === 0}
+              className="p-1.5 sm:p-2 bg-neutral-100 dark:bg-white/5 hover:bg-rose-500/10 text-neutral-600 dark:text-neutral-400 hover:text-rose-600 dark:hover:text-rose-400 rounded-lg transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
+              title={isFa ? 'پاکسازی لاگ‌ها' : 'Clear logs'}
+            >
+              <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            </button>
+
+            {/* Minimize / Expand Toggle */}
+            <button
+              onClick={() => setShowLogsCard(prev => !prev)}
+              className="p-1.5 sm:p-2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition cursor-pointer"
+              title={showLogsCard ? (isFa ? 'بستن' : 'Collapse') : (isFa ? 'باز کردن' : 'Expand')}
+            >
+              {showLogsCard ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Log Viewer Container */}
+        {showLogsCard && (
+          <div className="space-y-2">
+            <div className="bg-[#09090b] dark:bg-black border border-neutral-800 dark:border-white/10 rounded-xl overflow-hidden shadow-inner">
+              {/* Terminal Titlebar */}
+              <div className="flex items-center justify-between px-3 py-2 bg-neutral-900/90 border-b border-neutral-800 text-[11px] text-neutral-400">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-rose-500/80 inline-block" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80 inline-block" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80 inline-block" />
+                  <span className="mr-2 font-mono text-[10px] text-neutral-400 dir-ltr text-left">
+                    xray.log {status.running ? '• streaming' : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoScrollLogs}
+                      onChange={(e) => setAutoScrollLogs(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-0 cursor-pointer"
+                    />
+                    <span>{isFa ? 'اسکرول خودکار' : 'Auto-scroll'}</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Logs Content Area */}
+              <div
+                ref={logsContainerRef}
+                className="h-64 sm:h-80 md:h-96 overflow-y-auto overflow-x-auto p-3 font-mono text-[11px] sm:text-xs leading-relaxed dir-ltr text-left scrollbar-thin select-text"
+              >
+                {vpnLogs.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-neutral-500 p-6 text-center space-y-2">
+                    <ScrollText className="h-8 w-8 opacity-30 mx-auto" />
+                    <p className="text-xs">
+                      {isFa
+                        ? 'هنوز لاگی ثبت نشده است. با فعال کردن یکی از کانفیگ‌های VPN، خروجی هسته Xray/V2Ray در این قسمت قرار می‌گیرد.'
+                        : 'No logs recorded yet. When a VPN config is connected, Xray/V2Ray core logs will appear here in real-time.'}
+                    </p>
+                  </div>
+                ) : filteredLogs.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-neutral-500 p-6 text-center space-y-2">
+                    <Search className="h-6 w-6 opacity-30 mx-auto" />
+                    <p className="text-xs">
+                      {isFa
+                        ? `هیچ خط لاگی مطابق با جستجوی «${logSearchQuery}» یافت نشد.`
+                        : `No log entries match the search filter "${logSearchQuery}".`}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {filteredLogs.map((line, idx) => (
+                      <div
+                        key={idx}
+                        className={`py-0.5 px-1.5 rounded hover:bg-white/5 transition flex items-start gap-2 whitespace-pre-wrap break-all ${getLogLineStyle(line)}`}
+                      >
+                        <span className="text-neutral-600 dark:text-neutral-600 select-none text-[10px] w-6 shrink-0 text-right">
+                          {idx + 1}
+                        </span>
+                        <span className="flex-1">{line}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Quick status footer */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[10px] sm:text-[11px] text-neutral-500 dark:text-neutral-400 px-1 gap-1">
+              <div className="flex items-center gap-3">
+                <span>
+                  {isFa ? 'پروکسی محلی SOCKS5:' : 'Local SOCKS5:'}{' '}
+                  <code className="text-indigo-600 dark:text-indigo-400 font-mono font-semibold">127.0.0.1:10808</code>
+                </span>
+                <span>
+                  {isFa ? 'پروکسی HTTP:' : 'HTTP Proxy:'}{' '}
+                  <code className="text-indigo-600 dark:text-indigo-400 font-mono font-semibold">127.0.0.1:10809</code>
+                </span>
+              </div>
+              <div>
+                {autoRefreshLogs ? (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                    ● {isFa ? 'بروزرسانی خودکار لاگ‌ها هر ۳ ثانیه فعال است' : 'Live auto-sync every 3s'}
+                  </span>
+                ) : (
+                  <span>{isFa ? 'بروزرسانی خودکار غیرفعال است' : 'Auto-sync is paused'}</span>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
