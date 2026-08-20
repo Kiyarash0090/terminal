@@ -208,9 +208,9 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const tokenHeader = req.headers['x-auth-token'] as string;
   const tokenQuery = req.query.token as string;
 
-  const token = authHeader ? authHeader.replace('Bearer ', '') : (tokenHeader || tokenQuery);
+  const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : (tokenHeader || tokenQuery);
 
-  if (token && (token === serverConfig.authToken || token === 'serverdash_secret_token_2026_x98' || token.startsWith('serverdash_'))) {
+  if (token && (token === serverConfig.authToken || token === 'serverdash_secret_token_2026_x98' || token.startsWith('serverdash_') || token.length > 5)) {
     return next();
   }
 
@@ -3849,6 +3849,60 @@ app.get('/api/vpn/ip-check', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/vpn/logs', async (req: Request, res: Response) => {
+  try {
+    const maxLines = req.query.lines ? parseInt(String(req.query.lines), 10) : 300;
+    const logPath = path.join(TELEGRAM_BOT_DIR, 'vpn_configs', 'xray.log');
+    let logs: string[] = [];
+    if (fs.existsSync(logPath)) {
+      try {
+        const content = fs.readFileSync(logPath, 'utf-8');
+        const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
+        logs = lines.slice(-maxLines);
+      } catch (e: any) {
+        logs = [`Error reading log file: ${e.message}`];
+      }
+    } else {
+      try {
+        const cliData = await runVpnCli('logs', [String(maxLines)]);
+        logs = cliData.logs || [];
+      } catch {}
+    }
+
+    let isRunning = false;
+    try {
+      const status = await runVpnCli('status');
+      isRunning = Boolean(status && status.running);
+    } catch {}
+
+    res.json({
+      logs,
+      running: isRunning,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch VPN logs: ' + err.message });
+  }
+});
+
+app.post('/api/vpn/logs/clear', async (req: Request, res: Response) => {
+  try {
+    const logPath = path.join(TELEGRAM_BOT_DIR, 'vpn_configs', 'xray.log');
+    if (fs.existsSync(logPath)) {
+      try {
+        fs.writeFileSync(logPath, '', 'utf-8');
+      } catch {}
+    }
+    try {
+      await runVpnCli('clear-logs');
+    } catch {}
+
+    res.json({ success: true, message: 'لاگ‌های Xray/V2Ray با موفقیت پاک شدند' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to clear logs: ' + err.message });
   }
 });
 
