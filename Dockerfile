@@ -52,12 +52,15 @@ RUN if [ -f "telegram_bot/proxychains.conf" ]; then \
       cp proxychains.conf /etc/proxychains.conf; \
     fi
 
-# Clone and install bgutil-ytdlp-pot-provider plugin to /opt/bgutil
+# Clone and install bgutil-ytdlp-pot-provider plugin and server to /opt/bgutil
 RUN git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil \
     && if [ -d "/opt/bgutil/server" ]; then cd /opt/bgutil/server && npm install && (npx tsc || true); fi \
-    && if [ -d "/opt/bgutil/plugin" ]; then pip3 install --no-cache-dir --break-system-packages /opt/bgutil/plugin || pip3 install --no-cache-dir /opt/bgutil/plugin || true; fi \
-    && mkdir -p /root/.yt-dlp/plugins /root/yt-dlp-plugins \
-    && if [ -d "/opt/bgutil/plugin" ]; then cp -r /opt/bgutil/plugin/* /root/.yt-dlp/plugins/ && cp -r /opt/bgutil/plugin/* /root/yt-dlp-plugins/; fi
+    && (pip3 install --no-cache-dir --break-system-packages bgutil-ytdlp-pot-provider yt-dlp || pip3 install --no-cache-dir bgutil-ytdlp-pot-provider yt-dlp || true) \
+    && mkdir -p /root/.yt-dlp/plugins /root/yt-dlp-plugins /root/.config/yt-dlp \
+    && echo '--extractor-args "youtubepot:provider=http://127.0.0.1:4416"' > /etc/yt-dlp.conf \
+    && cp /etc/yt-dlp.conf /root/.config/yt-dlp/config
+
+
 
 RUN npm run build
 

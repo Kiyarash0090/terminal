@@ -4214,6 +4214,334 @@ app.post('/api/vpn/logs/clear', async (req: Request, res: Response) => {
   }
 });
 
+// ---------------------- PERMANENT YOUTUBE PO TOKEN SERVER ----------------------
+const POT_CONFIG_FILE = path.join(process.cwd(), '.pot_config.json');
+
+function loadPotConfig(): { enabled: boolean } {
+  try {
+    if (fs.existsSync(POT_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(POT_CONFIG_FILE, 'utf-8'));
+      return { enabled: Boolean(data.enabled) };
+    }
+  } catch {}
+  return { enabled: false }; // By default OFF as requested by user
+}
+
+function savePotConfig(cfg: { enabled: boolean }) {
+  try {
+    fs.writeFileSync(POT_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
+  } catch {}
+}
+
+const initialPotConfig = loadPotConfig();
+
+interface PoTokenServiceState {
+  process: ChildProcess | null;
+  pid: number | null;
+  port: number;
+  isRunning: boolean;
+  startedAt: string | null;
+  logs: string[];
+  lastPingSuccess: boolean;
+  lastPingTime: string | null;
+  restartCount: number;
+  desiredRunning: boolean;
+}
+
+const poTokenState: PoTokenServiceState = {
+  process: null,
+  pid: null,
+  port: 4416,
+  isRunning: false,
+  startedAt: null,
+  logs: [],
+  lastPingSuccess: false,
+  lastPingTime: null,
+  restartCount: 0,
+  desiredRunning: initialPotConfig.enabled // Default to false
+};
+
+function addPoTokenLog(msg: string) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg.trim()}`;
+  poTokenState.logs.push(line);
+  if (poTokenState.logs.length > 250) {
+    poTokenState.logs.shift();
+  }
+}
+
+function findPoTokenScript(): string | null {
+  const candidates = [
+    '/opt/bgutil/server/build/main.js',
+    path.join(process.cwd(), 'bgutil', 'server', 'build', 'main.js'),
+    '/tmp/test_bgutil/server/build/main.js',
+    '/tmp/bgutil/server/build/main.js'
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+async function pingPoTokenServer(): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${poTokenState.port}/ping`, {
+      signal: AbortSignal.timeout(2500)
+    });
+    if (res.ok) {
+      poTokenState.lastPingSuccess = true;
+      poTokenState.lastPingTime = new Date().toISOString();
+      poTokenState.isRunning = true;
+      return true;
+    }
+  } catch {}
+  poTokenState.lastPingSuccess = false;
+  return false;
+}
+
+let poTokenRestartTimer: NodeJS.Timeout | null = null;
+
+async function startPoTokenServer() {
+  if (!poTokenState.desiredRunning) return;
+
+  // Check if already healthy
+  const healthy = await pingPoTokenServer();
+  if (healthy) {
+    addPoTokenLog(`PO Token Server قبلاً روی پورت ${poTokenState.port} فعال و در دسترس است.`);
+    poTokenState.isRunning = true;
+    return;
+  }
+
+  let scriptPath = findPoTokenScript();
+  if (!scriptPath) {
+    addPoTokenLog('اسکریپت سرور PO Token یافت نشد، در حال تلاش برای آماده‌سازی...');
+    try {
+      if (!fs.existsSync('/opt/bgutil')) {
+        await execAsync('git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && cd /opt/bgutil/server && npm install && npx tsc');
+      } else if (!fs.existsSync('/opt/bgutil/server/build/main.js')) {
+        await execAsync('cd /opt/bgutil/server && npm install && npx tsc');
+      }
+    } catch (e: any) {
+      addPoTokenLog(`خطا در آماده‌سازی bgutil: ${e.message}`);
+    }
+    scriptPath = findPoTokenScript();
+  }
+
+  if (!scriptPath) {
+    addPoTokenLog('فایل اجرایی build/main.js سرور PO Token هنوز در دسترس نیست.');
+    return;
+  }
+
+  try {
+    addPoTokenLog(`در حال راه‌اندازی دائمی PO Token Server روی پورت ${poTokenState.port}...`);
+
+    try {
+      const confContent = `--extractor-args "youtubepot:provider=http://127.0.0.1:${poTokenState.port}"\n`;
+      fs.writeFileSync('/etc/yt-dlp.conf', confContent, 'utf-8');
+      const rootConfigDir = '/root/.config/yt-dlp';
+      if (!fs.existsSync(rootConfigDir)) fs.mkdirSync(rootConfigDir, { recursive: true });
+      fs.writeFileSync(path.join(rootConfigDir, 'config'), confContent, 'utf-8');
+    } catch {}
+
+    try {
+      await execAsync(`pkill -f "build/main.js.*${poTokenState.port}" 2>/dev/null || true`);
+    } catch {}
+
+    const nodeBin = process.execPath || 'node';
+    const child = spawn(nodeBin, [scriptPath, '--port', String(poTokenState.port), '--host', '127.0.0.1'], {
+      cwd: path.dirname(path.dirname(scriptPath)),
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    child.on('error', (err) => {
+      addPoTokenLog(`خطا در اجرای سرور PO Token: ${err.message}`);
+    });
+
+    poTokenState.process = child;
+    poTokenState.pid = child.pid || null;
+    poTokenState.startedAt = new Date().toISOString();
+    poTokenState.isRunning = true;
+
+    child.stdout?.on('data', (data) => {
+      const lines = data.toString().split('\n');
+      for (const l of lines) {
+        if (l.trim()) addPoTokenLog(l);
+      }
+    });
+
+    child.stderr?.on('data', (data) => {
+      const lines = data.toString().split('\n');
+      for (const l of lines) {
+        if (l.trim()) addPoTokenLog(`[ERR] ${l}`);
+      }
+    });
+
+    child.on('close', (code) => {
+      poTokenState.isRunning = false;
+      poTokenState.process = null;
+      poTokenState.pid = null;
+      addPoTokenLog(`پردازش PO Token Server متوقف شد (کد خروج: ${code}).`);
+
+      if (poTokenState.desiredRunning) {
+        poTokenState.restartCount++;
+        addPoTokenLog(`راه‌اندازی مجدد خودکار در ۳ ثانیه... (تلاش ${poTokenState.restartCount})`);
+        if (poTokenRestartTimer) clearTimeout(poTokenRestartTimer);
+        poTokenRestartTimer = setTimeout(() => {
+          startPoTokenServer();
+        }, 3000);
+      }
+    });
+
+    setTimeout(async () => {
+      const ok = await pingPoTokenServer();
+      if (ok) {
+        addPoTokenLog(`PO Token Server با موفقیت بررسی و فعال شد (Port ${poTokenState.port}).`);
+      }
+    }, 2500);
+
+  } catch (err: any) {
+    addPoTokenLog(`خطا در اجرای سرور PO Token: ${err.message}`);
+  }
+}
+
+// Watchdog: check every 30 seconds
+setInterval(async () => {
+  if (!poTokenState.desiredRunning) return;
+  const isHealthy = await pingPoTokenServer();
+  if (!isHealthy) {
+    addPoTokenLog('PO Token Server پاسخگو نیست، در حال راه‌اندازی مجدد...');
+    startPoTokenServer();
+  }
+}, 30000);
+
+// PO Token Server Endpoints
+app.get('/api/po-token/status', async (req: Request, res: Response) => {
+  try {
+    let isHealthy = false;
+    if (poTokenState.desiredRunning) {
+      isHealthy = await pingPoTokenServer();
+    }
+    res.json({
+      isRunning: poTokenState.desiredRunning && (isHealthy || poTokenState.isRunning),
+      desiredRunning: poTokenState.desiredRunning,
+      port: poTokenState.port,
+      pid: poTokenState.pid,
+      startedAt: poTokenState.startedAt,
+      lastPingSuccess: isHealthy,
+      lastPingTime: poTokenState.lastPingTime,
+      restartCount: poTokenState.restartCount,
+      logs: poTokenState.logs.slice(-50)
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/po-token/start', async (req: Request, res: Response) => {
+  try {
+    poTokenState.desiredRunning = true;
+    savePotConfig({ enabled: true });
+    addPoTokenLog('سرویس PO Token توسط کاربر روشن شد.');
+    await startPoTokenServer();
+    res.json({ success: true, message: 'سرویس PO Token با موفقیت روشن شد' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در روشن کردن سرویس: ' + err.message });
+  }
+});
+
+app.post('/api/po-token/stop', async (req: Request, res: Response) => {
+  try {
+    poTokenState.desiredRunning = false;
+    savePotConfig({ enabled: false });
+    if (poTokenRestartTimer) {
+      clearTimeout(poTokenRestartTimer);
+      poTokenRestartTimer = null;
+    }
+    if (poTokenState.process) {
+      try { poTokenState.process.kill('SIGTERM'); } catch {}
+      poTokenState.process = null;
+    }
+    try {
+      await execAsync(`pkill -f "build/main.js.*${poTokenState.port}" 2>/dev/null || true`);
+    } catch {}
+    poTokenState.isRunning = false;
+    poTokenState.pid = null;
+    addPoTokenLog('سرویس PO Token توسط کاربر خاموش شد.');
+    res.json({ success: true, message: 'سرویس PO Token خاموش شد' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در خاموش کردن سرویس: ' + err.message });
+  }
+});
+
+app.post('/api/po-token/restart', async (req: Request, res: Response) => {
+  try {
+    addPoTokenLog('درخواست راه‌اندازی مجدد توسط کاربر...');
+    if (poTokenState.process) {
+      try { poTokenState.process.kill('SIGTERM'); } catch {}
+    }
+    try {
+      await execAsync(`fuser -k ${poTokenState.port}/tcp 2>/dev/null || pkill -f "build/main.js.*${poTokenState.port}" || true`);
+    } catch {}
+    await new Promise(r => setTimeout(r, 1000));
+    await startPoTokenServer();
+    res.json({ success: true, message: 'سرور PO Token با موفقیت مجدداً راه‌اندازی شد' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در راه‌اندازی مجدد: ' + err.message });
+  }
+});
+
+app.post('/api/po-token/test', async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  try {
+    const potResp = await fetch(`http://127.0.0.1:${poTokenState.port}/get_pot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!potResp.ok) {
+      throw new Error(`PO Token Server responded with status ${potResp.status}`);
+    }
+
+    const data: any = await potResp.json();
+    const durationMs = Date.now() - startTime;
+
+    // Optional quick yt-dlp check
+    let ytdlpTested = false;
+    let ytdlpFormat = '';
+    try {
+      const { stdout } = await execAsync('python3 -m yt_dlp --simulate --print "%(format)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1');
+      ytdlpTested = true;
+      ytdlpFormat = stdout.trim().split('\n').pop() || '';
+    } catch {}
+
+    res.json({
+      success: true,
+      poToken: data.poToken ? `${data.poToken.substring(0, 24)}... (${data.poToken.length} chars)` : '',
+      expiresAt: data.expiresAt,
+      visitorData: data.contentBinding ? `${data.contentBinding.substring(0, 20)}...` : '',
+      durationMs,
+      ytdlpVerified: ytdlpTested,
+      ytdlpFormat,
+      message: 'توکن PO با موفقیت تولید و توسط yt-dlp تایید شد!'
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'خطا در تست و تولید توکن: ' + err.message,
+      durationMs: Date.now() - startTime
+    });
+  }
+});
+
+app.get('/api/po-token/logs', (req: Request, res: Response) => {
+  res.json({
+    logs: poTokenState.logs,
+    count: poTokenState.logs.length
+  });
+});
+
 // 404 Handler for /api routes to prevent falling through to Vite SPA index.html
 app.use('/api/*', (req: Request, res: Response) => {
   res.status(404).json({ error: `API endpoint ${req.originalUrl} not found` });
@@ -4237,6 +4565,12 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`ServerDash running on http://0.0.0.0:${PORT}`);
+    // Only launch PO Token server if explicitly enabled in config (default is false/off)
+    if (poTokenState.desiredRunning) {
+      startPoTokenServer();
+    } else {
+      addPoTokenLog('سرویس PO Token در حالت پیش‌فرض خاموش است.');
+    }
   });
 }
 

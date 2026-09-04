@@ -7,3 +7,5 @@ PySocks
 socksio
 httpx[socks]
 aiohttp-socks
+yt-dlp
+bgutil-ytdlp-pot-provider
