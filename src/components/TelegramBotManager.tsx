@@ -1,0 +1,460 @@
+import React, { useState, useEffect } from 'react';
+import { Bot, Save, Power, RefreshCw, Send, AlertCircle, CheckCircle2, ShieldAlert, Copy, Check, X } from 'lucide-react';
+import { Language } from '../types';
+
+interface TelegramBotManagerProps {
+  token: string | null;
+  lang: Language;
+}
+
+export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, lang }) => {
+  const isFa = lang === 'fa';
+
+  const [botConfig, setBotConfig] = useState({
+    bot_token: '',
+    admin_user_id: '',
+    web_url: '',
+  });
+
+  const [status, setStatus] = useState({
+    isRunning: false,
+    pid: null as number | null,
+    startedAt: null as string | null,
+    logs: [] as string[],
+    configValid: false
+  });
+
+  const [copiedLogs, setCopiedLogs] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [testAlertLoading, setTestAlertLoading] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Fetch bot config and status on mount
+  useEffect(() => {
+    if (!token) return;
+    fetchConfig();
+    fetchStatus();
+
+    // Poll status every 3 seconds for live logs
+    const interval = setInterval(fetchStatus, 3000);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  const fetchConfig = async () => {
+    if (!token) return;
+    setConfigLoading(true);
+    try {
+      const resp = await fetch('/api/telegram-bot/config', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
+        const data = await resp.json();
+        setBotConfig({
+          bot_token: data.bot_token || '',
+          admin_user_id: data.admin_user_id ? String(data.admin_user_id) : '',
+          web_url: data.web_url || window.location.origin,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch bot config:', err);
+    } finally {
+      setConfigLoading(false);
+    }
+  };
+
+  const fetchStatus = async () => {
+    if (!token) return;
+    try {
+      const resp = await fetch('/api/telegram-bot/status', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
+        const data = await resp.json();
+        setStatus({
+          isRunning: data.isRunning,
+          pid: data.pid,
+          startedAt: data.startedAt,
+          logs: data.logs || [],
+          configValid: data.configValid
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch bot status:', err);
+    }
+  };
+
+  const handleSaveConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage(null);
+    try {
+      const resp = await fetch('/api/telegram-bot/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(botConfig)
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        setMessage({
+          text: isFa ? 'تنظیمات ربات با موفقیت ذخیره شد.' : 'Telegram bot settings saved successfully.',
+          type: 'success'
+        });
+        fetchStatus();
+      } else {
+        setMessage({
+          text: data.error || (isFa ? 'خطا در ذخیره تنظیمات' : 'Failed to save configuration'),
+          type: 'error'
+        });
+      }
+    } catch (err: any) {
+      setMessage({
+        text: err.message || (isFa ? 'خطا در شبکه' : 'Network error'),
+        type: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendTestAlert = async () => {
+    setTestAlertLoading(true);
+    setMessage(null);
+    try {
+      const resp = await fetch('/api/telegram-bot/alerts/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          bot_token: botConfig.bot_token,
+          admin_user_id: botConfig.admin_user_id
+        })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        setMessage({
+          text: data.message || (isFa ? 'پیام تست با موفقیت به تلگرام ارسال شد!' : 'Test alert sent successfully!'),
+          type: 'success'
+        });
+      } else {
+        setMessage({
+          text: data.error || (isFa ? 'خطا در ارسال پیام تست' : 'Failed to send test alert'),
+          type: 'error'
+        });
+      }
+    } catch (err: any) {
+      setMessage({
+        text: err.message || (isFa ? 'خطا در ارتباط با سرور' : 'Connection error'),
+        type: 'error'
+      });
+    } finally {
+      setTestAlertLoading(false);
+    }
+  };
+
+  const handleStartBot = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const resp = await fetch('/api/telegram-bot/start', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success) {
+        setMessage({
+          text: isFa ? 'ربات تلگرام با موفقیت راه‌اندازی شد.' : 'Telegram bot started successfully.',
+          type: 'success'
+        });
+        fetchStatus();
+      } else {
+        setMessage({
+          text: data.error || (isFa ? 'خطا در راه‌اندازی ربات' : 'Failed to start bot'),
+          type: 'error'
+        });
+      }
+    } catch (err: any) {
+      setMessage({
+        text: err.message || (isFa ? 'خطا در شبکه' : 'Network error'),
+        type: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStopBot = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const resp = await fetch('/api/telegram-bot/stop', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (resp.ok) {
+        setMessage({
+          text: isFa ? 'ربات تلگرام متوقف شد.' : 'Telegram bot stopped successfully.',
+          type: 'success'
+        });
+        fetchStatus();
+      }
+    } catch (err: any) {
+      setMessage({
+        text: err.message || (isFa ? 'خطا در شبکه' : 'Network error'),
+        type: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 sm:space-y-6" dir={isFa ? 'rtl' : 'ltr'}>
+      {/* Title Header */}
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-neutral-800 pb-3 sm:pb-4 gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="p-2 sm:p-2.5 bg-sky-50 dark:bg-sky-950/30 text-sky-500 rounded-lg sm:rounded-xl shrink-0">
+            <Bot className="h-5 w-5 sm:h-6 sm:w-6" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-sm sm:text-xl font-bold text-gray-900 dark:text-neutral-100 truncate">
+              {isFa ? 'دستیار و مدیریت ربات تلگرام' : 'Telegram Assistant & Bot Manager'}
+            </h1>
+            <p className="text-[11px] sm:text-sm text-gray-500 dark:text-neutral-400 mt-0.5 truncate">
+              {isFa 
+                ? 'کنترل کامل از راه دور سرور و مشاهده لاگ‌های زنده ربات تلگرام' 
+                : 'Remote server control and live logs monitoring for Telegram bot'}
+            </p>
+          </div>
+        </div>
+        
+        {/* Status indicator */}
+        <div className="flex items-center gap-2 shrink-0">
+          {status.isRunning ? (
+            <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              {isFa ? 'ربات فعال' : 'Bot Running'}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400">
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-gray-400"></span>
+              {isFa ? 'ربات متوقف' : 'Bot Stopped'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Messages */}
+      {message && (
+        <div className={`p-3 sm:p-4 rounded-xl flex items-start gap-2.5 sm:gap-3 border ${
+          message.type === 'success' 
+            ? 'bg-emerald-50 dark:bg-emerald-950/10 border-emerald-100 dark:border-emerald-900/30 text-emerald-800 dark:text-emerald-400' 
+            : 'bg-rose-50 dark:bg-rose-950/10 border-rose-100 dark:border-rose-900/30 text-rose-800 dark:text-rose-400'
+        }`}>
+          {message.type === 'success' ? <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5 mt-0.5 shrink-0" /> : <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 mt-0.5 shrink-0" />}
+          <span className="text-xs sm:text-sm font-medium">{message.text}</span>
+        </div>
+      )}
+
+      {/* Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        
+        {/* Config and control Column */}
+        <div className="lg:col-span-1 space-y-4 sm:space-y-6">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm">
+            <h3 className="text-xs sm:text-base font-semibold text-gray-900 dark:text-neutral-100 mb-3 sm:mb-4 flex items-center gap-2">
+              <Save className="h-4 w-4 sm:h-5 sm:w-5 text-sky-500" />
+              {isFa ? 'پیکربندی اتصال تلگرام' : 'Telegram Credentials'}
+            </h3>
+
+            <form onSubmit={handleSaveConfig} className="space-y-3 sm:space-y-4">
+              <div>
+                <label className="block text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1">
+                  {isFa ? 'توکن ربات تلگرام (Bot Token)' : 'Telegram Bot Token'}
+                </label>
+                <input
+                  type="password"
+                  value={botConfig.bot_token || ''}
+                  onChange={(e) => setBotConfig({ ...botConfig, bot_token: e.target.value })}
+                  placeholder="e.g. 123456789:ABCdefGhI..."
+                  required
+                  className="w-full px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-lg sm:rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1">
+                  {isFa ? 'شناسه عددی ادمین (Admin Chat ID)' : 'Admin User Chat ID'}
+                </label>
+                <input
+                  type="text"
+                  value={botConfig.admin_user_id || ''}
+                  onChange={(e) => setBotConfig({ ...botConfig, admin_user_id: e.target.value })}
+                  placeholder="e.g. 987654321"
+                  required
+                  className="w-full px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-lg sm:rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-neutral-400 mb-1">
+                  {isFa ? 'آدرس لینک وب اپ پنل (Web Panel URL)' : 'Web Panel URL / WebApp'}
+                </label>
+                <input
+                  type="text"
+                  value={botConfig.web_url || ''}
+                  onChange={(e) => setBotConfig({ ...botConfig, web_url: e.target.value })}
+                  placeholder="e.g. https://your-server-panel.app"
+                  className="w-full px-3 py-1.5 sm:px-3.5 sm:py-2 text-xs sm:text-sm bg-gray-50 dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-lg sm:rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 text-gray-800 dark:text-neutral-200"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={configLoading || loading}
+                  className="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+                >
+                  {configLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  {isFa ? 'ذخیره' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendTestAlert}
+                  disabled={testAlertLoading || !botConfig.bot_token || !botConfig.admin_user_id}
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-neutral-200 dark:disabled:bg-neutral-800 disabled:text-neutral-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+                  title={isFa ? 'ارسال پیام تست به اکانت تلگرام شما' : 'Send test notification to your Telegram'}
+                >
+                  {testAlertLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  <span>{isFa ? 'تست پیام' : 'Test Alert'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Controller Card */}
+          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm space-y-3 sm:space-y-4">
+            <h3 className="text-xs sm:text-base font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+              <Power className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-500" />
+              {isFa ? 'کنترلر وضعیت ربات' : 'Bot Process Control'}
+            </h3>
+
+            {!status.configValid && (
+              <div className="p-2.5 sm:p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30 rounded-lg sm:rounded-xl flex gap-2 text-amber-800 dark:text-amber-400 text-[11px] sm:text-xs">
+                <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>
+                  {isFa 
+                    ? 'پیکربندی ربات کامل نیست. ابتدا توکن معتبر و آیدی ادمین را وارد و ذخیره کنید.' 
+                    : 'Bot configuration is incomplete. Please enter and save valid keys first.'}
+                </span>
+              </div>
+            )}
+
+            <div className="flex gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={handleStartBot}
+                disabled={status.isRunning || !status.configValid || loading}
+                className="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-100 dark:disabled:bg-neutral-800 disabled:text-gray-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+              >
+                <Power className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                {isFa ? 'راه‌اندازی' : 'Start Bot'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStopBot}
+                disabled={!status.isRunning || loading}
+                className="flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 sm:px-4 sm:py-2.5 bg-rose-500 hover:bg-rose-600 disabled:bg-neutral-100 dark:disabled:bg-neutral-800 disabled:text-gray-400 text-white rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+              >
+                <Power className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                {isFa ? 'خاموش کردن' : 'Stop Bot'}
+              </button>
+            </div>
+
+            {status.isRunning && (
+              <div className="border-t border-gray-50 dark:border-neutral-800 pt-2.5 text-[11px] sm:text-xs text-gray-500 dark:text-neutral-400 space-y-1">
+                <div className="flex justify-between">
+                  <span>{isFa ? 'شناسه پردازش (PID):' : 'Process ID (PID):'}</span>
+                  <span className="font-mono text-gray-700 dark:text-neutral-300 font-semibold">{status.pid}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>{isFa ? 'زمان شروع فعالیت:' : 'Uptime Started At:'}</span>
+                  <span className="font-mono text-gray-700 dark:text-neutral-300">
+                    {status.startedAt ? status.startedAt.substring(11, 19) : ''}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Section: Live Logs Column */}
+        <div className="lg:col-span-2">
+          <div className="bg-white dark:bg-neutral-900 border border-gray-100 dark:border-neutral-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-sm flex flex-col h-[400px] sm:h-[480px]">
+            <div className="flex justify-between items-center mb-3 sm:mb-4 gap-2">
+              <h3 className="text-xs sm:text-base font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+                <RefreshCw className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-sky-500" />
+                {isFa ? 'لاگ‌های زنده ربات تلگرام' : 'Telegram Bot Live Output Logs'}
+              </h3>
+              <div className="flex items-center gap-1.5">
+                {status.logs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(status.logs.join('\n'));
+                      setCopiedLogs(true);
+                      setTimeout(() => setCopiedLogs(false), 2000);
+                    }}
+                    className="px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition flex items-center gap-1 cursor-pointer font-sans"
+                    title={isFa ? 'کپی تمام لاگ‌ها' : 'Copy All Logs'}
+                  >
+                    {copiedLogs ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                    <span>{copiedLogs ? (isFa ? 'کپی شد!' : 'Copied!') : (isFa ? 'کپی لاگ' : 'Copy Logs')}</span>
+                  </button>
+                )}
+                <button 
+                  onClick={fetchStatus}
+                  className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200 transition-colors cursor-pointer"
+                  title={isFa ? 'بروزرسانی لاگ‌ها' : 'Refresh Logs'}
+                >
+                  <RefreshCw className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="relative flex-1 bg-neutral-950 border border-neutral-900 rounded-lg sm:rounded-xl p-2.5 sm:p-4 font-mono text-[11px] sm:text-xs text-neutral-300 overflow-y-auto space-y-1 select-none"
+            >
+              {status.logs.length > 0 ? (
+                status.logs.map((log, idx) => (
+                  <div key={idx} className="whitespace-pre-wrap break-all leading-relaxed hover:bg-neutral-900/50 px-1 py-0.5 rounded select-text cursor-text selection:bg-blue-600/40 selection:text-white">
+                    {log}
+                  </div>
+                ))
+              ) : (
+                <div className="text-neutral-600 text-center py-16 sm:py-24 select-none">
+                  {isFa ? 'هیچ خروجی یا لاگی برای نمایش وجود ندارد.' : 'No output logs available. Start the bot to see logs here.'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};

@@ -1,0 +1,735 @@
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { Cpu, Play, StopCircle, RefreshCw, Terminal, Eye, Search, Radio, Copy, Check, X, ShieldAlert, GitCommit, UploadCloud, ArrowDown, Trash2, Boxes, Shield, RotateCcw } from 'lucide-react';
+import { BackgroundTask, SystemProcess, Language } from '../types';
+import { translations } from '../locales/translations';
+import { GithubUploadDeployModal } from './GithubUploadDeployModal';
+import { ProjectUpdateModal } from './ProjectUpdateModal';
+import { PythonPackagesModal } from './PythonPackagesModal';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
+
+interface ProcessManagerProps {
+  token: string | null;
+  lang: Language;
+}
+
+export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) => {
+  const t = translations[lang];
+  const [tasks, setTasks] = useState<BackgroundTask[]>([]);
+  const [sysProcesses, setSysProcesses] = useState<SystemProcess[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [defaultPath, setDefaultPath] = useState<string>('/app/applet');
+
+  // New script & package modals state
+  const [isGithubDeployModalOpen, setIsGithubDeployModalOpen] = useState(false);
+  const [isPythonPackagesModalOpen, setIsPythonPackagesModalOpen] = useState(false);
+
+  // Custom Delete Confirm Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    type: 'single' | 'clearStopped' | null;
+    taskId?: string;
+    taskName?: string;
+  }>({ isOpen: false, type: null });
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (token) {
+      fetch('/api/terminal/cwd', {
+        headers: { 'x-auth-token': token }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.cwd) {
+            setDefaultPath(data.cwd);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [token]);
+
+
+
+  // Logs modal
+  const [activeTaskLogs, setActiveTaskLogs] = useState<{ id: string; name: string; command: string; logs: string[]; isRunning: boolean } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [copiedLogs, setCopiedLogs] = useState(false);
+  const [autoScrollLogs, setAutoScrollLogs] = useState(true);
+
+  const modalLogEndRef = useRef<HTMLDivElement>(null);
+  const modalLogContainerRef = useRef<HTMLDivElement>(null);
+  const scrollPosRef = useRef<number>(0);
+  const isProgrammaticScrollRef = useRef<boolean>(false);
+
+  const handleLogScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (isProgrammaticScrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight <= 40;
+    setAutoScrollLogs(isAtBottom);
+    if (!isAtBottom) {
+      scrollPosRef.current = scrollTop;
+    }
+  };
+
+  const fetchProcesses = async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await fetch('/api/processes/list', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'x-auth-token': token
+        }
+      });
+      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+        const data = await res.json();
+        setTasks(data.backgroundTasks || []);
+        setSysProcesses(data.systemProcesses || []);
+      }
+    } catch (e) {
+      // silent network retry
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProcesses();
+    const interval = setInterval(fetchProcesses, 2500);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  // Live log polling when log modal is open for a running task
+  useEffect(() => {
+    if (!activeTaskLogs) return;
+
+    const pollLogs = async () => {
+      try {
+        const res = await fetch(`/api/processes/${activeTaskLogs.id}/logs`, {
+          headers: { 'x-auth-token': token || '' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const currentTask = tasks.find(t => t.id === activeTaskLogs.id);
+          const isStillRunning = currentTask ? currentTask.status === 'running' : false;
+          const newLogs = data.logs || [];
+
+          setActiveTaskLogs(prev => {
+            if (!prev) return null;
+            if (prev.logs.length === newLogs.length && prev.isRunning === isStillRunning && prev.logs.every((l, i) => l === newLogs[i])) {
+              return prev;
+            }
+            if (!autoScrollLogs && modalLogContainerRef.current) {
+              scrollPosRef.current = modalLogContainerRef.current.scrollTop;
+            }
+            return {
+              ...prev,
+              logs: newLogs,
+              isRunning: isStillRunning
+            };
+          });
+        }
+      } catch (err) {
+        console.error('Failed to poll logs:', err);
+      }
+    };
+
+    pollLogs();
+    const logInterval = setInterval(pollLogs, 1200);
+    return () => clearInterval(logInterval);
+  }, [activeTaskLogs?.id, token, tasks]);
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    const container = modalLogContainerRef.current;
+    if (!container) return;
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior
+    });
+    modalLogEndRef.current?.scrollIntoView({ behavior });
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 400);
+  };
+
+  // Auto scroll log modal or preserve scroll position when auto-scroll is disabled
+  useLayoutEffect(() => {
+    const container = modalLogContainerRef.current;
+    if (!container) return;
+
+    if (autoScrollLogs) {
+      scrollToBottom('smooth');
+    } else {
+      isProgrammaticScrollRef.current = true;
+      container.scrollTop = scrollPosRef.current;
+      const timer = setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTaskLogs?.logs, autoScrollLogs]);
+
+  const handleRestartTask = async (id: string) => {
+    try {
+      const res = await fetch('/api/processes/restart', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({ id })
+      });
+      if (res.ok) {
+        fetchProcesses();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'خطا در ریستارت اسکریپت');
+      }
+    } catch {
+      alert('خطا در ارتباط با سرور');
+    }
+  };
+
+  // Update task state
+  const [updatingTask, setUpdatingTask] = useState<BackgroundTask | null>(null);
+
+  const handleKillTask = async (id?: string, pid?: number) => {
+    try {
+      await fetch('/api/processes/kill', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token || ''
+        },
+        body: JSON.stringify({ id, pid })
+      });
+      fetchProcesses();
+    } catch (e) {
+      alert('Failed to terminate process');
+    }
+  };
+
+  const handleRemoveTask = (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    setDeleteModal({
+      isOpen: true,
+      type: 'single',
+      taskId: id,
+      taskName: task?.name || task?.command || id
+    });
+  };
+
+  const handleClearStoppedTasks = () => {
+    setDeleteModal({
+      isOpen: true,
+      type: 'clearStopped'
+    });
+  };
+
+  const confirmExecuteTaskDelete = async () => {
+    if (!deleteModal.type) return;
+    setIsDeleting(true);
+    try {
+      if (deleteModal.type === 'single' && deleteModal.taskId) {
+        const id = deleteModal.taskId;
+        const res = await fetch('/api/processes/remove', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          },
+          body: JSON.stringify({ id })
+        });
+        if (res.ok) {
+          setTasks(prev => prev.filter(t => t.id !== id));
+          if (activeTaskLogs?.id === id) {
+            setActiveTaskLogs(null);
+          }
+        }
+      } else if (deleteModal.type === 'clearStopped') {
+        const res = await fetch('/api/processes/clear-stopped', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': token || ''
+          }
+        });
+        if (res.ok) {
+          fetchProcesses();
+        }
+      }
+    } catch {
+      // silent catch or handle
+    } finally {
+      setIsDeleting(false);
+      setDeleteModal({ isOpen: false, type: null });
+    }
+  };
+
+  const handleViewLogs = async (task: BackgroundTask) => {
+    try {
+      const res = await fetch(`/api/processes/${task.id}/logs`, {
+        headers: { 'x-auth-token': token || '' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAutoScrollLogs(true);
+        setActiveTaskLogs({
+          id: task.id,
+          name: task.name,
+          command: task.command,
+          logs: data.logs || [],
+          isRunning: task.status === 'running'
+        });
+      }
+    } catch (e) {
+      alert('Failed to fetch logs');
+    }
+  };
+
+  const handleCopyLogs = () => {
+    if (!activeTaskLogs) return;
+    const text = activeTaskLogs.logs.join('');
+    navigator.clipboard.writeText(text);
+    setCopiedLogs(true);
+    setTimeout(() => setCopiedLogs(false), 2000);
+  };
+
+  const filteredSysProcesses = sysProcesses.filter(
+    (p) => p.command.toLowerCase().includes(searchQuery.toLowerCase()) || p.pid.toString().includes(searchQuery)
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-2 border-b border-neutral-200 dark:border-white/10">
+        <div>
+          <h2 className="text-xl font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+            <Cpu className="h-5 w-5 text-purple-500" />
+            <span>{t.processManager}</span>
+          </h2>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+            {t.backgroundTasks}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchProcesses}
+            className="p-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-800 dark:text-neutral-200 transition cursor-pointer"
+            title={lang === 'fa' ? 'بروزرسانی' : 'Refresh'}
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+
+
+      {/* Dedicated Deploy & Launch Section */}
+      <div className="p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 transition hover:shadow-md">
+        <div className="flex items-start gap-2.5 sm:gap-3.5">
+          <div className="p-2 sm:p-3 rounded-lg sm:rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5">
+            <UploadCloud className="h-4 w-4 sm:h-6 sm:w-6" />
+          </div>
+          <div>
+            <h3 className="text-xs sm:text-base font-bold text-neutral-900 dark:text-white mb-0.5">
+              {lang === 'fa' ? 'راه‌اندازی و دپلوی پروژه جدید' : 'Launch & Deploy New Project'}
+            </h3>
+            <p className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed max-w-xl">
+              {lang === 'fa'
+                ? 'دپلوی مستقیم از گیت‌هاب یا فایل ZIP به عنوان پردازش پس‌زمینه با لاگ زنده'
+                : 'Deploy directly from GitHub repositories or zip archives as a persistent background process with real-time logs.'}
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 w-full sm:w-auto flex items-center gap-2">
+          <button
+            onClick={() => setIsPythonPackagesModalOpen(true)}
+            className="flex-1 sm:flex-initial px-2.5 py-1.5 sm:px-3 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+          >
+            <Boxes className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span>{lang === 'fa' ? 'کتابخانه‌های پایتون' : 'Python Packages'}</span>
+          </button>
+          <button
+            onClick={() => setIsGithubDeployModalOpen(true)}
+            className="flex-1 sm:flex-initial px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold bg-[#238636] hover:bg-[#2ea043] text-white transition flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer shadow-md shadow-emerald-500/20 whitespace-nowrap"
+          >
+            <UploadCloud className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span>{lang === 'fa' ? 'دپلوی پروژه جدید' : 'Start New Deployment'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Active Background Tasks List */}
+      <div className="p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex items-center justify-between border-b border-neutral-100 dark:border-white/5 pb-2.5">
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs sm:text-sm font-bold text-neutral-800 dark:text-neutral-200">
+              {t.activeTasks}
+            </h3>
+            <span className="text-[10px] sm:text-[11px] px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-white/5 text-neutral-500 font-mono">
+              {tasks.length}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {tasks.some(t => t.status !== 'running') && (
+              <button
+                onClick={handleClearStoppedTasks}
+                className="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-medium border border-rose-500/20 text-rose-500 hover:bg-rose-500/10 transition flex items-center gap-1 cursor-pointer"
+                title={lang === 'fa' ? 'حذف تمام اسکریپت‌های متوقف شده' : 'Clear stopped tasks'}
+              >
+                <Trash2 className="h-3 w-3" />
+                <span>{lang === 'fa' ? 'پاکسازی' : 'Clear Stopped'}</span>
+              </button>
+            )}
+            <span className="text-xs text-neutral-500 hidden sm:inline">
+              {lang === 'fa' ? 'اجرا به صورت پس‌زمینه (Screen / Tmux)' : 'Persistent Background Tasks'}
+            </span>
+          </div>
+        </div>
+
+        {tasks.length === 0 ? (
+          <div className="text-center py-6 sm:py-8 text-neutral-400 text-xs">
+            <Terminal className="h-6 w-6 sm:h-8 sm:w-8 mx-auto mb-2 opacity-30 text-neutral-400" />
+            <p>{lang === 'fa' ? 'هیچ اسکریپت پس‌زمینه‌ای در حال اجرا نیست.' : 'No active background scripts found.'}</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {tasks.map((task) => (
+              <div
+                key={task.id}
+                className="p-2.5 sm:p-3.5 rounded-lg sm:rounded-xl border border-neutral-200/80 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] hover:bg-neutral-100/60 dark:hover:bg-white/[0.04] transition flex flex-col md:flex-row md:items-center justify-between gap-2.5"
+              >
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <div className="p-1.5 sm:p-2 rounded-lg bg-blue-500/10 text-blue-500 shrink-0 mt-0.5">
+                    <Terminal className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                      <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
+                        {task.name}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold uppercase ${
+                          task.status === 'running'
+                            ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                            : task.status === 'completed'
+                            ? 'bg-blue-500/10 text-blue-400'
+                            : 'bg-rose-500/10 text-rose-400'
+                        }`}
+                      >
+                        {task.status === 'running' && <Radio className="h-2 w-2 sm:h-2.5 sm:w-2.5 animate-pulse" />}
+                        {task.status}
+                      </span>
+                      {task.pid && (
+                        <span className="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                          PID: {task.pid}
+                        </span>
+                      )}
+                      <span
+                        className={`inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                          task.useVpn !== false
+                            ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                            : 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20'
+                        }`}
+                        title={
+                          task.useVpn !== false
+                            ? (lang === 'fa' ? 'پروکسی VPN (127.0.0.1:10808) فعال است' : 'VPN Proxy (127.0.0.1:10808) Enabled')
+                            : (lang === 'fa' ? 'پروکسی VPN غیرفعال است (اتصال مستقیم)' : 'VPN Proxy Disabled (Direct)')
+                        }
+                      >
+                        <Shield className="h-2.5 w-2.5" />
+                        <span>{task.useVpn !== false ? 'VPN Proxy' : 'Direct'}</span>
+                      </span>
+
+                      {task.autoRestartOnCrash !== false && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                          title={lang === 'fa' ? 'راه‌اندازی مجدد خودکار در صورت کرش فعال است' : 'Auto-restart on crash enabled'}
+                        >
+                          <RotateCcw className="h-2.5 w-2.5" />
+                          <span>{lang === 'fa' ? 'راه‌اندازی خودکار' : 'Auto-Restart'}</span>
+                        </span>
+                      )}
+
+                      {(task.crashCount ?? 0) > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          title={lang === 'fa' ? `تعداد کرش‌های بازیابی شده: ${task.crashCount}` : `Crashes recovered: ${task.crashCount}`}
+                        >
+                          <span>{lang === 'fa' ? `کرش‌ها: ${task.crashCount}` : `Crashes: ${task.crashCount}`}</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] sm:text-[11px] font-mono text-neutral-500 dark:text-neutral-400 truncate mt-0.5 sm:mt-1 dir-ltr text-right">
+                      {task.command}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-1 pt-1.5 md:pt-0 border-t md:border-t-0 border-neutral-200/60 dark:border-white/5 shrink-0">
+                  <button
+                    onClick={() => handleViewLogs(task)}
+                    className="px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-md sm:rounded-lg bg-blue-600/10 text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white transition flex items-center gap-1 cursor-pointer text-[11px] sm:text-xs font-medium"
+                  >
+                    <Eye className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                    <span>{lang === 'fa' ? 'لاگ' : 'Logs'}</span>
+                  </button>
+                  <button
+                    onClick={() => handleRestartTask(task.id)}
+                    className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-neutral-200/60 dark:bg-white/5 text-neutral-700 dark:text-neutral-300 hover:bg-amber-500 hover:text-white transition cursor-pointer"
+                    title={t.restartTask}
+                  >
+                    <RefreshCw className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setUpdatingTask(task)}
+                    className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-neutral-200/60 dark:bg-white/5 text-neutral-700 dark:text-neutral-300 hover:bg-indigo-600 hover:text-white transition cursor-pointer"
+                    title={t.updateProject}
+                  >
+                    <GitCommit className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                  </button>
+                  {task.status === 'running' && (
+                    <button
+                      onClick={() => handleKillTask(task.id)}
+                      className="px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-md sm:rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition flex items-center gap-1 cursor-pointer text-[11px] sm:text-xs font-medium"
+                    >
+                      <StopCircle className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                      <span>{lang === 'fa' ? 'توقف' : 'Stop'}</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleRemoveTask(task.id)}
+                    className="p-1 sm:p-1.5 rounded-md sm:rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-600 hover:text-white transition cursor-pointer"
+                    title={lang === 'fa' ? 'حذف از جدول' : 'Remove from table'}
+                  >
+                    <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* System Processes Table */}
+      <div className="p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-neutral-100 dark:border-white/5 pb-2.5">
+          <h3 className="text-xs sm:text-sm font-bold text-neutral-800 dark:text-neutral-200">{t.systemProcesses}</h3>
+          <div className="relative w-full sm:w-64">
+            <Search className="h-3.5 w-3.5 text-neutral-400 absolute left-2.5 top-2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t.searchProcess}
+              className="pl-7 pr-3 py-1 rounded-lg sm:rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-[11px] sm:text-xs text-neutral-900 dark:text-neutral-100 w-full focus:ring-1 focus:ring-blue-500 outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto max-h-96 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-800 dir-ltr">
+          <table className="w-full min-w-[480px] text-left text-[11px] sm:text-xs font-mono">
+            <thead className="bg-neutral-200 dark:bg-[#18181b] text-neutral-600 dark:text-neutral-400 font-semibold sticky top-0 z-10 border-b border-neutral-300 dark:border-white/10">
+              <tr>
+                <th className="p-1.5 sm:p-2.5 w-14 sm:w-16">PID</th>
+                <th className="p-1.5 sm:p-2.5 w-16 sm:w-20 hidden sm:table-cell">User</th>
+                <th className="p-1.5 sm:p-2.5 w-16 sm:w-20">CPU %</th>
+                <th className="p-1.5 sm:p-2.5 w-16 sm:w-20">MEM %</th>
+                <th className="p-1.5 sm:p-2.5">Command</th>
+                <th className="p-1.5 sm:p-2.5 text-right w-16 sm:w-20">{t.actions}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100 dark:divide-white/5">
+              {filteredSysProcesses.slice(0, 30).map((proc) => (
+                <tr key={proc.pid} className="hover:bg-neutral-50 dark:hover:bg-white/5 transition">
+                  <td className="p-1.5 sm:p-2.5 text-blue-500 dark:text-blue-400 font-bold whitespace-nowrap">{proc.pid}</td>
+                  <td className="p-1.5 sm:p-2.5 text-neutral-500 hidden sm:table-cell whitespace-nowrap">{proc.user}</td>
+                  <td className="p-1.5 sm:p-2.5 text-emerald-600 dark:text-emerald-400 font-semibold whitespace-nowrap">{proc.cpu}%</td>
+                  <td className="p-1.5 sm:p-2.5 text-purple-600 dark:text-purple-400 font-semibold whitespace-nowrap">{proc.mem}%</td>
+                  <td className="p-1.5 sm:p-2.5 text-neutral-700 dark:text-neutral-300 max-w-[140px] sm:max-w-xs truncate">{proc.command}</td>
+                  <td className="p-1.5 sm:p-2.5 text-right">
+                    <button
+                      onClick={() => handleKillTask(undefined, proc.pid)}
+                      className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition cursor-pointer text-[10px] sm:text-[11px] font-sans font-bold"
+                    >
+                      Kill
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Live Logs View Modal */}
+      {activeTaskLogs && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-neutral-950 text-neutral-100 rounded-2xl border border-neutral-800 w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs">
+            {/* Modal Header */}
+            <div className="p-4 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <Terminal className="h-5 w-5 text-emerald-400 shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-neutral-100 truncate">{activeTaskLogs.name}</span>
+                    {activeTaskLogs.isRunning ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold animate-pulse">
+                        <Radio className="h-3 w-3" /> LIVE OUTPUT
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded-full">
+                        FINISHED
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-neutral-400 truncate mt-0.5">{activeTaskLogs.command}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleCopyLogs}
+                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition text-xs font-sans flex items-center gap-1.5 cursor-pointer"
+                >
+                  {copiedLogs ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  <span>کپی لاگ</span>
+                </button>
+
+                {activeTaskLogs.isRunning && (
+                  <button
+                    onClick={() => {
+                      handleKillTask(activeTaskLogs.id);
+                      setActiveTaskLogs(prev => prev ? { ...prev, isRunning: false } : null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white transition text-xs font-sans font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <StopCircle className="h-3.5 w-3.5" />
+                    <span>توقف اسکریپت</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setActiveTaskLogs(null)}
+                  className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Live Body */}
+            <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden select-none">
+              <div
+                ref={modalLogContainerRef}
+                onScroll={handleLogScroll}
+                className="flex-1 overflow-y-auto p-4 bg-[#0d0d0e] leading-relaxed whitespace-pre-wrap text-neutral-200 text-xs font-mono space-y-1 scrollbar-thin scrollbar-thumb-neutral-800 select-text cursor-text selection:bg-blue-600/40 selection:text-white"
+              >
+                {activeTaskLogs.logs.length === 0 ? (
+                  <div className="text-neutral-500 py-12 text-center italic select-none">
+                    در حال انتظار برای خروجی اسکریپت...
+                  </div>
+                ) : (
+                  activeTaskLogs.logs.map((logLine, idx) => (
+                    <div key={idx} className="break-words select-text hover:bg-white/5 px-1 py-0.5 rounded transition">
+                      {logLine}
+                    </div>
+                  ))
+                )}
+                <div ref={modalLogEndRef} />
+              </div>
+
+              {!autoScrollLogs && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAutoScrollLogs(true);
+                    scrollToBottom('smooth');
+                  }}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-sans px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 opacity-95 hover:opacity-100 transition cursor-pointer border border-white/20 backdrop-blur-md z-20"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                  <span>{lang === 'fa' ? 'اسکرول به جدیدترین لاگ‌ها' : 'Scroll to Bottom'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 bg-neutral-900 border-t border-neutral-800 text-[11px] text-neutral-400 flex items-center justify-between font-sans">
+              <span className="flex items-center gap-1.5">
+                {activeTaskLogs.isRunning ? (
+                  autoScrollLogs ? (
+                    <span className="text-emerald-400">🟢 اسکرول خودکار زنده فعال است</span>
+                  ) : (
+                    <span className="text-amber-400">⏸️ اسکرول خودکار غیرفعال شد (مکث برای بررسی لاگ‌های قدیمی)</span>
+                  )
+                ) : (
+                  'پایان اجرای اسکریپت'
+                )}
+              </span>
+              <button
+                onClick={() => setActiveTaskLogs(null)}
+                className="px-4 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold cursor-pointer"
+              >
+                بستن
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Update Project Modal */}
+      <ProjectUpdateModal
+        token={token}
+        lang={lang}
+        isOpen={updatingTask !== null}
+        onClose={() => setUpdatingTask(null)}
+        onSuccess={fetchProcesses}
+        task={updatingTask}
+      />
+
+      {/* GitHub-style Deploy Modal */}
+      <GithubUploadDeployModal
+        token={token}
+        lang={lang}
+        isOpen={isGithubDeployModalOpen}
+        onClose={() => setIsGithubDeployModalOpen(false)}
+        onSuccess={fetchProcesses}
+        defaultPath={defaultPath}
+        isDeployMode={true}
+        initialTaskName=""
+        initialCommand=""
+      />
+
+      {/* Python Packages Manager Modal */}
+      <PythonPackagesModal
+        token={token}
+        lang={lang}
+        isOpen={isPythonPackagesModalOpen}
+        onClose={() => setIsPythonPackagesModalOpen(false)}
+      />
+
+      {/* Custom Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={deleteModal.isOpen}
+        onClose={() => setDeleteModal({ isOpen: false, type: null })}
+        onConfirm={confirmExecuteTaskDelete}
+        isLoading={isDeleting}
+        lang={lang}
+        itemName={deleteModal.taskName}
+        itemType={deleteModal.type === 'clearStopped' ? (lang === 'fa' ? 'اسکریپت‌های متوقف‌شده' : 'Stopped Scripts') : (lang === 'fa' ? 'پردازش / اسکریپت' : 'Script / Process')}
+        title={lang === 'fa' ? 'تایید حذف اسکریپت پس‌زمینه' : 'Confirm Script Deletion'}
+        description={
+          deleteModal.type === 'clearStopped'
+            ? (lang === 'fa' ? 'آیا از پاکسازی و حذف تمام اسکریپت‌های متوقف‌شده اطمینان دارید؟' : 'Are you sure you want to clear all stopped scripts?')
+            : (lang === 'fa' ? 'آیا از حذف این پردازش و تمام لاگ‌های ثبت‌شده آن اطمینان دارید؟' : 'Are you sure you want to delete this process and its log history?')
+        }
+      />
+    </div>
+  );
+};
