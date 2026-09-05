@@ -376,6 +376,52 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     });
   };
 
+  const handleDeleteFailedConfigs = async () => {
+    const failedConfigs = configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success);
+    if (failedConfigs.length === 0) {
+      setMessage({
+        text: isFa
+          ? (testingAll ? 'تاکنون هیچ کانفیگ خرابی یافت نشده است. تست همچنان در حال انجام است...' : 'هیچ کانفیگ خرابی (که در تست ناموفق باشد) یافت نشد.')
+          : (testingAll ? 'No broken configs found so far. Test is still in progress...' : 'No broken configs found.'),
+        type: 'error'
+      });
+      return;
+    }
+
+    const failedIndices = failedConfigs.map(c => c.index);
+    try {
+      const res = await fetch('/api/vpn/configs/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ indices: failedIndices })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.trashId) {
+          setUndoToast({
+            id: data.trashId,
+            trashId: data.trashId,
+            message: isFa ? `${failedIndices.length} کانفیگ خراب با موفقیت حذف شد` : `${failedIndices.length} failed configs deleted`
+          });
+        } else {
+          setMessage({
+            text: isFa ? `${failedIndices.length} کانفیگ خراب با موفقیت حذف گردید.` : `${failedIndices.length} failed configs deleted.`,
+            type: 'success'
+          });
+        }
+        setConfigs(prev => prev.filter(c => !failedIndices.includes(c.index)));
+        fetchStatus();
+      } else {
+        setMessage({ text: data.error || data.message || (isFa ? 'خطا در حذف کانفیگ‌های خراب' : 'Error deleting failed configs'), type: 'error' });
+      }
+    } catch (err: any) {
+      setMessage({ text: err.message || (isFa ? 'خطا در برقراری ارتباط' : 'Network error'), type: 'error' });
+    }
+  };
+
   const handleDeleteConfig = (index: number) => {
     const configItem = configs.find(c => c.index === index);
     setDeleteModal({
@@ -565,7 +611,6 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
   };
 
   const handleTestYtdlp = async (index: number) => {
-    setTestingYtdlpIndex(index);
     setConfigs(prev => prev.map(c => c.index === index ? {
       ...c,
       testResult: {
@@ -590,8 +635,6 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
       updateSingleConfigResult(index, { success: isSuccess, output: text, loading: false, log: data.details?.log });
     } catch (err: any) {
       updateSingleConfigResult(index, { success: false, output: err.message || 'خطا در اجرای تست yt-dlp', loading: false });
-    } finally {
-      setTestingYtdlpIndex(null);
     }
   };
 
@@ -606,8 +649,24 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     if (configs.length === 0) return;
     try {
       setTestingAll(true);
-      for (const c of configs) {
-        await handleTestYtdlp(c.index);
+      const currentConfigs = [...configs];
+
+      // Mark all configs as queued for yt-dlp test
+      setConfigs(prev => prev.map(c => ({
+        ...c,
+        testResult: {
+          success: false,
+          output: isFa ? '▶️ در صف تست yt-dlp یوتیوب...' : '▶️ Queued for yt-dlp test...',
+          loading: true
+        }
+      })));
+
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < currentConfigs.length; i += BATCH_SIZE) {
+        const chunk = currentConfigs.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          chunk.map(c => handleTestYtdlp(c.index))
+        );
       }
     } finally {
       setTestingAll(false);
@@ -1081,6 +1140,21 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                 <span>{isFa ? 'تست یوتیوب (yt-dlp)' : 'YouTube Test'}</span>
               </button>
 
+              {configs.some(c => c.testResult && !c.testResult.loading && !c.testResult.success) && (
+                <button
+                  onClick={handleDeleteFailedConfigs}
+                  className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-semibold transition cursor-pointer whitespace-nowrap bg-rose-600 hover:bg-rose-500 text-white shadow-xs animate-pulse"
+                  title={isFa ? 'حذف تمامی کانفیگ‌هایی که در تست ناموفق بودند' : 'Delete all failed/broken configs'}
+                >
+                  <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-white" />
+                  <span>
+                    {isFa
+                      ? `حذف خراب‌ها (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`
+                      : `Delete Failed (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`}
+                  </span>
+                </button>
+              )}
+
               <button
                 onClick={handleResetPingResults}
                 disabled={!configs.some(c => c.testResult)}
@@ -1100,6 +1174,39 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
             </button>
           </div>
         </div>
+
+        {/* Live Testing Progress Banner */}
+        {testingAll && (
+          <div className="bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/30 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-xs">
+            <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200 font-medium">
+              <Zap className="h-4 w-4 sm:h-5 sm:w-5 text-amber-500 animate-bounce shrink-0" />
+              <div>
+                <div className="font-bold text-xs sm:text-sm">
+                  {isFa ? 'تست گروهی کانفیگ‌ها در حال انجام است...' : 'Testing configs in parallel...'}
+                </div>
+                <div className="text-[10px] sm:text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                  {isFa
+                    ? `کانفیگ‌های سالم: ${configs.filter(c => c.testResult?.success).length} | کانفیگ‌های خراب: ${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length}`
+                    : `Passed: ${configs.filter(c => c.testResult?.success).length} | Failed: ${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length}`}
+                </div>
+              </div>
+            </div>
+
+            {configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length > 0 && (
+              <button
+                onClick={handleDeleteFailedConfigs}
+                className="w-full sm:w-auto px-3.5 py-2 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold rounded-lg text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-md animate-pulse shrink-0"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>
+                  {isFa
+                    ? `حذف فوری کانفیگ‌های خراب (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`
+                    : `Delete Failed Now (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* YouTube Test Video URL Config Bar */}
         <div className="bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-[11px] sm:text-xs">
@@ -1270,11 +1377,11 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
 
                     <button
                       onClick={() => handleTestYtdlp(cfg.index)}
-                      disabled={testingYtdlpIndex === cfg.index}
+                      disabled={cfg.testResult?.loading}
                       className="p-1.5 sm:p-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg sm:rounded-xl transition flex items-center justify-center cursor-pointer border border-red-500/20 disabled:opacity-50"
                       title={isFa ? 'تست دانلود یوتیوب (yt-dlp)' : 'Test YouTube Download (yt-dlp)'}
                     >
-                      <Video className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500 ${testingYtdlpIndex === cfg.index ? 'animate-pulse' : ''}`} />
+                      <Video className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500 ${cfg.testResult?.loading ? 'animate-pulse' : ''}`} />
                     </button>
 
                     {!isCurrentActive && (
