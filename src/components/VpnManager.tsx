@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Power, RefreshCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X, Terminal, ChevronDown, ChevronUp, ScrollText, Download, Play, Pause, Search } from 'lucide-react';
+import { Globe, Power, RefreshCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X, Terminal, ChevronDown, ChevronUp, ScrollText, Download, Play, Pause, Search, Video } from 'lucide-react';
 import { Language } from '../types';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { UndoToast } from './UndoToast';
@@ -83,6 +83,9 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
+  const [testingYtdlpIndex, setTestingYtdlpIndex] = useState<number | null>(null);
+  const [copiedConfigIndex, setCopiedConfigIndex] = useState<number | null>(null);
+  const [testVideoUrl, setTestVideoUrl] = useState('https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R');
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // New Config Modal/Input
@@ -159,6 +162,11 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
             };
           }
           return c;
+        });
+        merged.sort((a, b) => {
+          if (a.testResult?.success && !b.testResult?.success) return -1;
+          if (!a.testResult?.success && b.testResult?.success) return 1;
+          return 0;
         });
         setConfigs(merged);
       }
@@ -491,6 +499,23 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     }
   };
 
+  const updateSingleConfigResult = (index: number, testObj: { success: boolean; output: string; loading: boolean; log?: string }) => {
+    setConfigs(prev => {
+      const target = prev.find(c => c.index === index);
+      if (!target) return prev;
+      const cacheKey = target.config || target.name || String(target.index);
+      if (!testObj.loading) {
+        savePingResults({ [cacheKey]: testObj });
+      }
+      const updatedTarget = { ...target, testResult: testObj };
+      if (testObj.success && !testObj.loading) {
+        const rest = prev.filter(c => c.index !== index);
+        return [updatedTarget, ...rest];
+      }
+      return prev.map(c => c.index === index ? updatedTarget : c);
+    });
+  };
+
   const handleTestConfig = async (index: number) => {
     setConfigs(prev => prev.map(c => c.index === index ? { ...c, testResult: { success: false, output: isFa ? '📶 در حال تست پینگ...' : '📶 Testing ping...', loading: true } } : c));
     try {
@@ -509,15 +534,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
       const pingVal = dataPing.ping;
 
       if (!isPingSuccess) {
-        const testObj = { success: false, output: pingText, loading: false };
-        setConfigs(prev => prev.map(c => {
-          if (c.index === index) {
-            const cacheKey = c.config || c.name || String(c.index);
-            savePingResults({ [cacheKey]: testObj });
-            return { ...c, testResult: testObj };
-          }
-          return c;
-        }));
+        updateSingleConfigResult(index, { success: false, output: pingText, loading: false });
         return;
       }
 
@@ -541,18 +558,59 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
       const dataSpeed = await resSpeed.json();
       const isSpeedSuccess = dataSpeed.result?.[0] ?? true;
       const finalResultText = dataSpeed.result?.[1] || pingText;
-      const testObj = { success: isSpeedSuccess, output: finalResultText, loading: false };
-
-      setConfigs(prev => prev.map(c => {
-        if (c.index === index) {
-          const cacheKey = c.config || c.name || String(c.index);
-          savePingResults({ [cacheKey]: testObj });
-          return { ...c, testResult: testObj };
-        }
-        return c;
-      }));
+      updateSingleConfigResult(index, { success: isSpeedSuccess, output: finalResultText, loading: false });
     } catch (err: any) {
-      setConfigs(prev => prev.map(c => c.index === index ? { ...c, testResult: { success: false, output: err.message, loading: false } } : c));
+      updateSingleConfigResult(index, { success: false, output: err.message || 'Error', loading: false });
+    }
+  };
+
+  const handleTestYtdlp = async (index: number) => {
+    setTestingYtdlpIndex(index);
+    setConfigs(prev => prev.map(c => c.index === index ? {
+      ...c,
+      testResult: {
+        success: false,
+        output: isFa ? '▶️ در حال تست دانلود yt-dlp از یوتیوب...' : '▶️ Testing yt-dlp YouTube download...',
+        loading: true
+      }
+    } : c));
+
+    try {
+      const res = await fetch('/api/vpn/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ index, mode: 'ytdlp', videoUrl: testVideoUrl })
+      });
+      const data = await res.json();
+      const isSuccess = data.result?.[0] ?? false;
+      const text = data.result?.[1] || data.error || (isSuccess ? 'تست yt-dlp موفق بود' : 'تست yt-dlp ناموفق بود');
+      updateSingleConfigResult(index, { success: isSuccess, output: text, loading: false, log: data.details?.log });
+    } catch (err: any) {
+      updateSingleConfigResult(index, { success: false, output: err.message || 'خطا در اجرای تست yt-dlp', loading: false });
+    } finally {
+      setTestingYtdlpIndex(null);
+    }
+  };
+
+  const handleCopyConfig = (index: number, configStr: string) => {
+    if (!configStr) return;
+    navigator.clipboard.writeText(configStr);
+    setCopiedConfigIndex(index);
+    setTimeout(() => setCopiedConfigIndex(null), 2000);
+  };
+
+  const handleTestYtdlpAll = async () => {
+    if (configs.length === 0) return;
+    try {
+      setTestingAll(true);
+      for (const c of configs) {
+        await handleTestYtdlp(c.index);
+      }
+    } finally {
+      setTestingAll(false);
     }
   };
 
@@ -610,24 +668,13 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
               ping: pingVal
             };
 
-            const resObj = { success: isPingSuccess, output: pingText, loading: false };
-            setConfigs(prev => prev.map(item => {
-              if (item.index === c.index) {
-                const cacheKey = item.config || item.name || String(item.index);
-                savePingResults({ [cacheKey]: resObj });
-                return { ...item, testResult: resObj };
-              }
-              return item;
-            }));
+            updateSingleConfigResult(c.index, { success: isPingSuccess, output: pingText, loading: false });
           } catch (err: any) {
             pingResultsMap[c.index] = {
               success: false,
               output: err.message || 'Error testing ping'
             };
-            setConfigs(prev => prev.map(item => item.index === c.index ? {
-              ...item,
-              testResult: { success: false, output: err.message || 'Error', loading: false }
-            } : item));
+            updateSingleConfigResult(c.index, { success: false, output: err.message || 'Error', loading: false });
           }
         }));
       }
@@ -660,16 +707,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
           const data = await res.json();
           const isSpeedSuccess = data.result?.[0] ?? false;
           const finalResultText = data.result?.[1] || pingRes.output;
-          const resObj = { success: isSpeedSuccess, output: finalResultText, loading: false };
-
-          setConfigs(prev => prev.map(item => {
-            if (item.index === c.index) {
-              const cacheKey = item.config || item.name || String(item.index);
-              savePingResults({ [cacheKey]: resObj });
-              return { ...item, testResult: resObj };
-            }
-            return item;
-          }));
+          updateSingleConfigResult(c.index, { success: isSpeedSuccess, output: finalResultText, loading: false });
         } catch (err: any) {
           // Keep ping result
         }
@@ -1023,7 +1061,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex flex-col gap-1 w-auto">
+            <div className="flex flex-row gap-1.5 w-auto flex-wrap">
               <button
                 onClick={handleTestAllConfigs}
                 disabled={testingAll || configs.length === 0}
@@ -1034,9 +1072,19 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
               </button>
 
               <button
+                onClick={handleTestYtdlpAll}
+                disabled={testingAll || configs.length === 0}
+                className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-red-500/20 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                title={isFa ? 'تست دانلود یوتیوب با yt-dlp برای همه کانفیگ‌ها' : 'Test YouTube download with yt-dlp for all configs'}
+              >
+                <Video className={`h-3 w-3 sm:h-3.5 sm:w-3.5 text-red-500 ${testingAll ? 'animate-pulse' : ''}`} />
+                <span>{isFa ? 'تست یوتیوب (yt-dlp)' : 'YouTube Test'}</span>
+              </button>
+
+              <button
                 onClick={handleResetPingResults}
                 disabled={!configs.some(c => c.testResult)}
-                className="flex items-center justify-center py-1 px-2.5 bg-neutral-100 dark:bg-white/5 hover:bg-rose-500/10 text-neutral-700 dark:text-neutral-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
+                className="flex items-center justify-center py-1.5 px-2.5 bg-neutral-100 dark:bg-white/5 hover:bg-rose-500/10 text-neutral-700 dark:text-neutral-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
                 title={isFa ? 'پاکسازی نتایج پینگ' : 'Reset Ping Results'}
               >
                 <RotateCcw className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-neutral-500" />
@@ -1050,6 +1098,25 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
               <Plus className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               <span>{isFa ? 'افزودن کانفیگ' : 'Add Config'}</span>
             </button>
+          </div>
+        </div>
+
+        {/* YouTube Test Video URL Config Bar */}
+        <div className="bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-[11px] sm:text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-neutral-700 dark:text-neutral-300 font-medium">
+              <Video className="h-3.5 w-3.5 text-red-500 shrink-0" />
+              <span>{isFa ? 'لینک ویدیو تست یوتیوب (yt-dlp + PO Token):' : 'YouTube Test Video URL (yt-dlp + PO Token):'}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-1 sm:max-w-md">
+              <input
+                type="text"
+                value={testVideoUrl}
+                onChange={(e) => setTestVideoUrl(e.target.value)}
+                placeholder="https://youtu.be/..."
+                className="w-full px-2.5 py-1 bg-white dark:bg-[#18181b] border border-neutral-300 dark:border-white/10 rounded-md text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-red-500 text-neutral-900 dark:text-white"
+              />
+            </div>
           </div>
         </div>
 
@@ -1163,6 +1230,17 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                             </button>
                           )}
                           <div className="whitespace-pre-wrap pr-3 dir-rtl:pl-3 dir-rtl:pr-0">{cfg.testResult.output}</div>
+                          {cfg.testResult.log && (
+                            <details className="mt-1.5 pt-1.5 border-t border-current/10">
+                              <summary className="cursor-pointer text-[10px] opacity-80 hover:opacity-100 select-none font-semibold flex items-center gap-1">
+                                <span>📋</span>
+                                <span>{isFa ? 'مشاهده لاگ کامل و جزئیات خروجی' : 'View Full Output Log'}</span>
+                              </summary>
+                              <pre className="mt-1.5 p-2 rounded bg-black/20 dark:bg-black/40 text-[9px] sm:text-[10px] overflow-x-auto whitespace-pre-wrap max-h-52 font-mono select-all">
+                                {cfg.testResult.log}
+                              </pre>
+                            </details>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1171,11 +1249,32 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                   {/* Config Action Buttons */}
                   <div className="flex items-center gap-1.5 sm:gap-2 self-end md:self-center shrink-0">
                     <button
+                      onClick={() => handleCopyConfig(cfg.index, cfg.config)}
+                      className="p-1.5 sm:p-2 bg-neutral-200 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/15 text-neutral-800 dark:text-neutral-200 rounded-lg sm:rounded-xl transition flex items-center justify-center cursor-pointer relative"
+                      title={isFa ? 'کپی لینک کانفیگ' : 'Copy Config Link'}
+                    >
+                      {copiedConfigIndex === cfg.index ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-500 animate-in zoom-in-50 duration-200" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-neutral-600 dark:text-neutral-300" />
+                      )}
+                    </button>
+
+                    <button
                       onClick={() => handleTestConfig(cfg.index)}
                       className="p-1.5 sm:p-2 bg-neutral-200 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/15 text-neutral-800 dark:text-neutral-200 rounded-lg sm:rounded-xl transition flex items-center justify-center cursor-pointer"
-                      title={isFa ? 'پینگ' : 'Ping'}
+                      title={isFa ? 'تست پینگ و سرعت' : 'Test Ping & Speed'}
                     >
                       <Zap className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-500" />
+                    </button>
+
+                    <button
+                      onClick={() => handleTestYtdlp(cfg.index)}
+                      disabled={testingYtdlpIndex === cfg.index}
+                      className="p-1.5 sm:p-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-lg sm:rounded-xl transition flex items-center justify-center cursor-pointer border border-red-500/20 disabled:opacity-50"
+                      title={isFa ? 'تست دانلود یوتیوب (yt-dlp)' : 'Test YouTube Download (yt-dlp)'}
+                    >
+                      <Video className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500 ${testingYtdlpIndex === cfg.index ? 'animate-pulse' : ''}`} />
                     </button>
 
                     {!isCurrentActive && (

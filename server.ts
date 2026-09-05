@@ -143,10 +143,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Simple in-memory rate limiter
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 120; // per window
+const RATE_LIMIT_MAX_REQUESTS = 1000; // per window for heavy batch operations
 
 function rateLimiter(req: Request, res: Response, next: NextFunction) {
-  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+  // Skip rate limiting for VPN management and internal polling endpoints
+  if (req.path.startsWith('/vpn/') || req.path.startsWith('/system/')) {
+    return next();
+  }
+
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
   const entry = rateLimitMap.get(clientIp);
 
@@ -4111,11 +4116,12 @@ app.post('/api/vpn/stop', async (req: Request, res: Response) => {
 
 app.post('/api/vpn/test', async (req: Request, res: Response) => {
   try {
-    const { index, mode, ping, testAll } = req.body;
+    const { index, mode, ping, videoUrl, testAll } = req.body;
     if (index !== undefined) {
       const modeStr = mode || 'full';
       const pingStr = ping !== undefined && ping !== null ? String(ping) : 'null';
-      const data = await runVpnCli('test', [String(index), modeStr, pingStr]);
+      const videoUrlStr = videoUrl || 'https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R';
+      const data = await runVpnCli('test', [String(index), modeStr, pingStr, videoUrlStr]);
       return res.json(data);
     }
     const arg = testAll ? 'all' : 'all';

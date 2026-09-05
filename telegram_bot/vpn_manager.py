@@ -265,10 +265,18 @@ class VPNManager:
 
         test_port = 10900 + index
         test_cfg = json.loads(json.dumps(config_json))
-        for inb in test_cfg.get("inbounds", []):
-            if inb.get("protocol") == "socks":
-                inb["port"] = test_port
-                break
+        test_cfg["inbounds"] = [
+            {
+                "port": test_port,
+                "listen": "127.0.0.1",
+                "protocol": "socks",
+                "settings": {
+                    "auth": "noauth",
+                    "udp": True,
+                },
+                "tag": f"socks-test-{test_port}"
+            }
+        ]
 
         tmp_path = CONFIGS_DIR / f"test_{index}.json"
         try:
@@ -284,24 +292,24 @@ class VPNManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            # بررسی crash سریع
+            # بررسی crash سریع (1 ثانیه)
             try:
-                await asyncio.wait_for(proc.wait(), timeout=3)
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
                 stderr_out = (await proc.stderr.read()).decode("utf-8", errors="ignore")
                 return None, 0, f"❌ v2ray crash کرد: {stderr_out[:200]}"
             except asyncio.TimeoutError:
-                pass  # خوبه، هنوز داره اجرا میشه
+                pass  # هنوز در حال اجراست
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.5)
 
             # بررسی listen بودن پورت
             import socket as _socket
             try:
-                with _socket.create_connection(("127.0.0.1", test_port), timeout=3):
+                with _socket.create_connection(("127.0.0.1", test_port), timeout=2.0):
                     pass
             except Exception:
                 proc.terminate()
-                return None, 0, "❌ پروکسی روی پورت listen نکرد (کانفیگ نامعتبر)"
+                return None, 0, f"❌ پروکسی روی پورت {test_port} listen نکرد (کانفیگ نامعتبر یا سرور قطع است)"
 
             return proc, test_port, None
 
@@ -467,6 +475,166 @@ class VPNManager:
             ul   = await self._measure_upload(port)
             return self._format_test_result(cfg["name"], ping, dl, ul)
         finally:
+            await self._kill_test_proc(proc)
+
+    async def test_ytdlp(self, index: int, video_url: str = "https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R") -> Tuple[bool, str, Dict]:
+        """تست اتصال و دانلود yt-dlp از یوتیوب با کیفیت پایین و PO Token جهت سنجش بات نشدن IP"""
+        cfg = self.get_config(index)
+        if not cfg:
+            return False, "❌ کانفیگ پیدا نشد.", {}
+
+        proc, port, err = await self._run_v2ray_for_test(index)
+        if err:
+            return False, f"❌ خطا در راه‌اندازی v2ray برای تست: {err}", {"log": str(err)}
+
+        out_file = CONFIGS_DIR / f"_yt_test_{port}.mp4"
+        if out_file.exists():
+            try:
+                out_file.unlink()
+            except Exception:
+                pass
+
+        try:
+            import shutil
+            ytdlp_cmd = []
+            if shutil.which("yt-dlp"):
+                ytdlp_cmd = ["yt-dlp"]
+            else:
+                try:
+                    import yt_dlp
+                    ytdlp_cmd = [sys.executable, "-m", "yt_dlp"]
+                except ImportError:
+                    try:
+                        inst = await asyncio.create_subprocess_exec(
+                            sys.executable, "-m", "pip", "install", "yt-dlp",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        await asyncio.wait_for(inst.communicate(), timeout=25)
+                    except Exception:
+                        pass
+                    ytdlp_cmd = [sys.executable, "-m", "yt_dlp"]
+
+            # Ensure bgutil-ytdlp-pot-provider and yt-dlp are installed
+            try:
+                import bgutil_ytdlp_pot_provider  # noqa: F401
+            except ImportError:
+                try:
+                    inst = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "pip", "install", "bgutil-ytdlp-pot-provider", "yt-dlp",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await asyncio.wait_for(inst.communicate(), timeout=20)
+                except Exception:
+                    pass
+
+            cmd = ytdlp_cmd + [
+                "--proxy", f"socks5://127.0.0.1:{port}",
+                "-f", "worst/b/worstvideo+worstaudio",
+                "--max-filesize", "500k",
+                "-N", "4",
+                "--no-playlist",
+                "--no-part",
+                "--socket-timeout", "5",
+                "--retries", "1",
+                "--fragment-retries", "1",
+                "--remote-components", "ejs:github",
+                "-o", str(out_file),
+            ]
+
+            if shutil.which("node"):
+                cmd.extend(["--js-runtimes", "node"])
+
+            cmd.append(video_url.strip() or "https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R")
+
+            p = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(p.communicate(), timeout=20)
+                stdout_str = stdout.decode("utf-8", errors="ignore")
+                stderr_str = stderr.decode("utf-8", errors="ignore")
+                log_combined = (stdout_str + "\n" + stderr_str).strip()
+                log_norm = log_combined.replace("’", "'").replace("‘", "'").lower()
+
+                # Check if any fragments/files were written to disk
+                yt_files = list(CONFIGS_DIR.glob(f"_yt_test_{port}*"))
+                total_bytes = sum(f.stat().st_size for f in yt_files if f.is_file())
+                has_downloaded_data = total_bytes > 0 or out_file.exists()
+
+                is_bot = any(kw in log_norm for kw in [
+                    "sign in to confirm you're not a bot",
+                    "confirm you're not a bot",
+                    "bot detection",
+                    "429: too many requests",
+                    "429 too many requests",
+                    "confirm you are not a robot",
+                    "use --cookies",
+                    "robot"
+                ]) and not has_downloaded_data
+
+                if is_bot:
+                    return False, "🚫 آی‌پی این کانفیگ توسط یوتیوب به عنوان بات شناسایی شده است! (YouTube Bot Blocked)", {
+                        "bot_detected": True,
+                        "log": log_combined
+                    }
+
+                max_size_reached = "larger than max-filesize" in log_norm or "aborting download" in log_norm
+                if has_downloaded_data or max_size_reached or (p.returncode == 0 and "ERROR:" not in stderr_str):
+                    size_kb = round(total_bytes / 1024, 1) if total_bytes > 0 else 500.0
+                    return True, f"▶️ دانلود موفق yt-dlp ({size_kb} KB)! آی‌پی کانفیگ «{cfg['name']}» توسط یوتیوب تمیز است.", {
+                        "bot_detected": False,
+                        "downloaded": True,
+                        "size_kb": size_kb,
+                        "log": log_combined
+                    }
+                else:
+                    # Extract error lines clearly
+                    err_lines = []
+                    for line in log_combined.splitlines():
+                        line_s = line.strip()
+                        if line_s and ("error" in line_s.lower() or "warning" in line_s.lower() or "unable" in line_s.lower() or "failed" in line_s.lower() or "refused" in line_s.lower() or "exception" in line_s.lower()):
+                            err_lines.append(line_s)
+
+                    if err_lines:
+                        err_msg = " | ".join(err_lines[-3:])
+                    else:
+                        non_empty = [l.strip() for l in log_combined.splitlines() if l.strip()]
+                        err_msg = " | ".join(non_empty[-2:]) if non_empty else "هیچ خروجی از yt-dlp دریافت نشد"
+
+                    return False, f"❌ تست yt-dlp ناموفق: {err_msg}", {
+                        "bot_detected": False,
+                        "log": log_combined
+                    }
+
+            except asyncio.TimeoutError:
+                out_p, err_p = b"", b""
+                try:
+                    p.kill()
+                    out_p, err_p = await p.communicate()
+                except Exception:
+                    pass
+                partial_log = ((out_p.decode("utf-8", errors="ignore") if out_p else "") + "\n" + (err_p.decode("utf-8", errors="ignore") if err_p else "")).strip()
+                return False, "⏰ زمان پاسخ‌دهی کانفیگ پایان یافت (Timeout 45s - سرعت سرور پایین است یا پروکسی متصل نشد)", {
+                    "bot_detected": False,
+                    "log": partial_log or "Timeout error after 45 seconds. Proxy server did not respond or connection was too slow."
+                }
+
+        except Exception as e:
+            return False, f"❌ خطا در اجرای تست yt-dlp: {e}", {
+                "bot_detected": False,
+                "log": f"Exception in test_ytdlp: {e}"
+            }
+        finally:
+            for tf in CONFIGS_DIR.glob(f"_yt_test_{port}*"):
+                try:
+                    tf.unlink()
+                except Exception:
+                    pass
             await self._kill_test_proc(proc)
 
     async def test_all_configs(self) -> List[Tuple[int, str, bool, str]]:

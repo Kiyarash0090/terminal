@@ -114,6 +114,10 @@ async def main():
                         pass
                 res = await vpn.test_speed(idx, ping_arg)
                 print(json.dumps({"result": res}))
+            elif mode == "ytdlp":
+                video_url = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] not in ("null", "None", "") else "https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R"
+                ok, msg, details = await vpn.test_ytdlp(idx, video_url)
+                print(json.dumps({"result": [ok, msg], "details": details}))
             else:
                 res = await vpn.test_config(idx)
                 print(json.dumps({"result": res}))
