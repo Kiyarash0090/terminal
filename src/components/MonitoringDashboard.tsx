@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Cpu, HardDrive, Network, Clock, Server, Activity, RefreshCw, Key, ShieldCheck, CheckCircle2, AlertCircle, RotateCw, ChevronDown, ChevronUp, Power, PowerOff } from 'lucide-react';
+import { Cpu, HardDrive, Network, Clock, Server, Activity, RefreshCw } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 
 import { SystemMetrics, Language } from '../types';
@@ -17,105 +17,6 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
   const [history, setHistory] = useState<SystemMetrics[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshRate, setRefreshRate] = useState<number>(2000);
-
-  const [potStatus, setPotStatus] = useState<{
-    isRunning: boolean;
-    port: number;
-    pid: number | null;
-    restartCount: number;
-    lastPingSuccess: boolean;
-    logs: string[];
-  } | null>(null);
-  const [potTesting, setPotTesting] = useState(false);
-  const [potTestResult, setPotTestResult] = useState<{
-    success: boolean;
-    message?: string;
-    error?: string;
-    poToken?: string;
-    durationMs?: number;
-    ytdlpVerified?: boolean;
-    ytdlpFormat?: string;
-  } | null>(null);
-  const [potRestarting, setPotRestarting] = useState(false);
-  const [potToggling, setPotToggling] = useState(false);
-  const [showPotLogs, setShowPotLogs] = useState(false);
-
-  const fetchPotStatus = async () => {
-    try {
-      const res = await fetch('/api/po-token/status', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-auth-token': token || ''
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPotStatus(data);
-      }
-    } catch {}
-  };
-
-  const handleTogglePot = async () => {
-    setPotToggling(true);
-    setPotTestResult(null);
-    const action = potStatus?.isRunning ? 'stop' : 'start';
-    try {
-      await fetch(`/api/po-token/${action}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-auth-token': token || ''
-        }
-      });
-      await new Promise(r => setTimeout(r, 1200));
-      await fetchPotStatus();
-    } catch {}
-    setPotToggling(false);
-  };
-
-  const handleTestPot = async () => {
-    if (!potStatus?.isRunning) {
-      setPotTestResult({
-        success: false,
-        error: lang === 'fa' ? 'سرویس توکن خاموش است. لطفاً ابتدا روی «روشن کردن» کلیک کنید.' : 'PO Token Server is currently OFF. Please click "Turn On" first.'
-      });
-      return;
-    }
-    setPotTesting(true);
-    setPotTestResult(null);
-    try {
-      const res = await fetch('/api/po-token/test', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-auth-token': token || '',
-          'Content-Type': 'application/json'
-        }
-      });
-      const data = await res.json();
-      setPotTestResult(data);
-    } catch (err: any) {
-      setPotTestResult({ success: false, error: err.message });
-    } finally {
-      setPotTesting(false);
-    }
-  };
-
-  const handleRestartPot = async () => {
-    setPotRestarting(true);
-    try {
-      await fetch('/api/po-token/restart', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-auth-token': token || ''
-        }
-      });
-      await new Promise(r => setTimeout(r, 1200));
-      await fetchPotStatus();
-    } catch {}
-    setPotRestarting(false);
-  };
 
   const fetchMetrics = async () => {
     if (!token) {
@@ -145,10 +46,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
 
   useEffect(() => {
     fetchMetrics();
-    fetchPotStatus();
     const interval = setInterval(() => {
       fetchMetrics();
-      fetchPotStatus();
     }, refreshRate);
     return () => clearInterval(interval);
   }, [refreshRate, token]);
@@ -428,164 +327,6 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ token,
             <span>{t.txSpeed}: {metrics?.netTxKbps} KB/s</span>
           </div>
         </div>
-      </div>
-
-      {/* YouTube PO Token Service Card */}
-      <div className="p-4 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-md sm:shadow-xl relative overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl shrink-0 ${
-              potStatus?.isRunning ? 'bg-emerald-500/10 text-emerald-500' : 'bg-neutral-500/10 text-neutral-400'
-            }`}>
-              <Key className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-                  {lang === 'fa' ? 'سرویس توکن یوتیوب (YouTube PO Token Server)' : 'YouTube PO Token Server (BgUtils)'}
-                </h3>
-                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                  potStatus?.isRunning 
-                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
-                    : 'bg-neutral-500/10 text-neutral-500 dark:text-neutral-400 border border-neutral-200 dark:border-white/10'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${potStatus?.isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-400'}`} />
-                  <span>{potStatus?.isRunning ? (lang === 'fa' ? 'روشن و فعال' : 'Online & Active') : (lang === 'fa' ? 'خاموش (پیش‌فرض)' : 'OFF (Default)')}</span>
-                </span>
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-white/5 text-neutral-600 dark:text-neutral-400 border border-neutral-200 dark:border-white/10">
-                  Port {potStatus?.port || 4416}
-                </span>
-              </div>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                {potStatus?.isRunning
-                  ? (lang === 'fa' 
-                    ? 'سرویس روشن است و توکن‌های PO مورد نیاز yt-dlp را برای عبور از محدودیت‌های بات یوتیوب تامین می‌کند.'
-                    : 'Service is running and generating PO tokens for yt-dlp bot bypass.')
-                  : (lang === 'fa' 
-                    ? 'این سرویس در حالت پیش‌فرض خاموش است. در صورت نیاز به دانلود از یوتیوب، با کلیک روی دکمه زیر آن را روشن کنید.'
-                    : 'Service is OFF by default. Click "Turn On" when needed for YouTube downloads.')}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 self-end sm:self-center shrink-0 flex-wrap">
-            {/* ON / OFF Toggle Button */}
-            <button
-              onClick={handleTogglePot}
-              disabled={potToggling}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer shadow-sm ${
-                potStatus?.isRunning
-                  ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-              }`}
-              title={potStatus?.isRunning ? (lang === 'fa' ? 'خاموش کردن سرویس' : 'Turn Off') : (lang === 'fa' ? 'روشن کردن سرویس' : 'Turn On')}
-            >
-              {potStatus?.isRunning ? (
-                <PowerOff className={`h-3.5 w-3.5 ${potToggling ? 'animate-spin' : ''}`} />
-              ) : (
-                <Power className={`h-3.5 w-3.5 ${potToggling ? 'animate-spin' : ''}`} />
-              )}
-              <span>
-                {potToggling
-                  ? (lang === 'fa' ? 'در حال اعمال...' : 'Applying...')
-                  : potStatus?.isRunning
-                    ? (lang === 'fa' ? 'خاموش کردن' : 'Turn Off')
-                    : (lang === 'fa' ? 'روشن کردن' : 'Turn On')}
-              </span>
-            </button>
-
-            {/* Test Token Button */}
-            <button
-              onClick={handleTestPot}
-              disabled={potTesting || !potStatus?.isRunning}
-              className="px-3 py-1.5 rounded-xl bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-white/10 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-40 cursor-pointer"
-              title={lang === 'fa' ? 'تست و تولید یک توکن زنده' : 'Test live token generation'}
-            >
-              {potTesting ? (
-                <RotateCw className="h-3.5 w-3.5 animate-spin text-emerald-500" />
-              ) : (
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-              )}
-              <span>{potTesting ? (lang === 'fa' ? 'در حال تست...' : 'Testing...') : (lang === 'fa' ? 'تست توکن' : 'Test Token')}</span>
-            </button>
-
-            {/* Restart Button (only when running) */}
-            {potStatus?.isRunning && (
-              <button
-                onClick={handleRestartPot}
-                disabled={potRestarting}
-                className="px-2.5 py-1.5 rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 text-xs font-medium flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
-                title={lang === 'fa' ? 'راه‌اندازی مجدد سرویس' : 'Restart service'}
-              >
-                <RotateCw className={`h-3.5 w-3.5 ${potRestarting ? 'animate-spin' : ''}`} />
-                <span>{potRestarting ? (lang === 'fa' ? 'ریستارت...' : 'Restarting...') : (lang === 'fa' ? 'ریستارت' : 'Restart')}</span>
-              </button>
-            )}
-
-            {/* Toggle Logs Button */}
-            <button
-              onClick={() => setShowPotLogs(!showPotLogs)}
-              className="px-2 py-1.5 rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 text-xs font-medium transition cursor-pointer"
-              title={lang === 'fa' ? 'نمایش لاگ‌ها' : 'Toggle logs'}
-            >
-              {showPotLogs ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Test Result Message */}
-        {potTestResult && (
-          <div className={`mt-2 p-2.5 rounded-xl text-xs flex items-start gap-2 border ${
-            potTestResult.success 
-              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' 
-              : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
-          }`}>
-            {potTestResult.success ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="font-semibold">
-                {potTestResult.success 
-                  ? (lang === 'fa' ? `تست با موفقیت انجام شد! پاسخ در ${potTestResult.durationMs} میلی‌ثانیه دریافت شد.` : `Test successful! Response received in ${potTestResult.durationMs}ms.`)
-                  : (lang === 'fa' ? 'خطا در تست:' : 'Test failed:')}
-              </div>
-              {potTestResult.poToken && (
-                <div className="font-mono text-[11px] opacity-90 mt-0.5 truncate dir-ltr text-left">
-                  po_token: {potTestResult.poToken}
-                </div>
-              )}
-              {potTestResult.ytdlpVerified && (
-                <div className="text-[11px] opacity-80 mt-0.5">
-                  {lang === 'fa' ? '✓ تایید شد: yt-dlp بدون خطا استخراج ویدیو را انجام می‌دهد' : '✓ Verified: yt-dlp extracted YouTube formats successfully'}
-                </div>
-              )}
-              {potTestResult.error && (
-                <div className="text-[11px] mt-0.5">{potTestResult.error}</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Live Logs Dropdown */}
-        {showPotLogs && (
-          <div className="mt-3 pt-3 border-t border-neutral-200 dark:border-white/10">
-            <div className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 mb-1 flex items-center justify-between">
-              <span>{lang === 'fa' ? 'لاگ‌های اخیر سرویس PO Token:' : 'Recent PO Token Server Logs:'}</span>
-              <span className="font-mono">{potStatus?.logs?.length || 0} خط</span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-neutral-900 text-neutral-200 font-mono text-[10px] sm:text-xs max-h-48 overflow-y-auto space-y-1 dir-ltr text-left">
-              {potStatus?.logs && potStatus.logs.length > 0 ? (
-                potStatus.logs.map((line, idx) => (
-                  <div key={idx} className="leading-tight opacity-90">{line}</div>
-                ))
-              ) : (
-                <div className="opacity-50 italic">هنوز لاگی ثبت نشده است. سرویس در حالت آماده‌باش است.</div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Live Charts */}

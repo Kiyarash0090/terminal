@@ -9,6 +9,7 @@ const TerminalView = lazy(() => import('./components/TerminalView').then(m => ({
 const FileManager = lazy(() => import('./components/FileManager').then(m => ({ default: m.FileManager })));
 const ProcessManager = lazy(() => import('./components/ProcessManager').then(m => ({ default: m.ProcessManager })));
 const VpnManager = lazy(() => import('./components/VpnManager').then(m => ({ default: m.VpnManager })));
+const YouTubeManager = lazy(() => import('./components/YouTubeManager').then(m => ({ default: m.YouTubeManager })));
 const DocumentationModal = lazy(() => import('./components/DocumentationModal').then(m => ({ default: m.DocumentationModal })));
 const SecurityModal = lazy(() => import('./components/SecurityModal').then(m => ({ default: m.SecurityModal })));
 const LoginModal = lazy(() => import('./components/LoginModal').then(m => ({ default: m.LoginModal })));
@@ -175,6 +176,9 @@ export default function App() {
           <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto">
             <div className={activeTab === 'monitoring' ? '' : 'hidden'}>
               <MonitoringDashboard token={auth.token} lang={lang} active={activeTab === 'monitoring'} />
+            </div>
+            <div className={activeTab === 'youtube' ? '' : 'hidden'}>
+              <YouTubeManager lang={lang} token={auth.token} />
             </div>
             <div className={activeTab === 'terminal' ? '' : 'hidden'}>
               <TerminalView token={auth.token} lang={lang} />
