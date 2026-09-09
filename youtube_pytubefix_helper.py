@@ -89,8 +89,8 @@ def create_yt_instance(url, po_port=None, proxy_arg=None, on_progress_callback=N
 
     proxies = get_proxy_dict(proxy_arg)
 
-    # When proxy is used, MWEB and WEB are completely unobstructed
-    clients_to_try = ['MWEB', 'WEB', 'ANDROID_VR', 'TV', 'ANDROID']
+    # Prioritize WEB and ANDROID_VR as they provide all DASH quality streams
+    clients_to_try = ['WEB', 'ANDROID_VR', 'MWEB', 'ANDROID', 'TV']
     last_exc = None
 
     for client in clients_to_try:
@@ -136,7 +136,9 @@ def extract_info(url, po_port=None, proxy_arg=None):
         if res:
             try:
                 h = int(res.replace('p', ''))
-                if h not in height_stream_map or (s.filesize or 0) > (height_stream_map[h].filesize or 0):
+                s_bitrate = getattr(s, 'bitrate', 0) or 0
+                prev_bitrate = getattr(height_stream_map.get(h), 'bitrate', 0) or 0
+                if h not in height_stream_map or s_bitrate > prev_bitrate:
                     height_stream_map[h] = s
             except Exception:
                 pass
@@ -166,7 +168,8 @@ def extract_info(url, po_port=None, proxy_arg=None):
         elif h >= 360: label = 'Medium (360p)'; badge = '360p'
         else: label = f'Low ({h}p)'; badge = f'{h}p'
 
-        approx_size = format_bytes(stream.filesize) if stream.filesize else ''
+        s_bitrate = getattr(stream, 'bitrate', 0) or 0
+        approx_size = format_bytes((s_bitrate * length) // 8) if s_bitrate and length else ''
 
         video_qualities.append({
             'id': f'video_{h}p',

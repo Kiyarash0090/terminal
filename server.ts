@@ -4796,186 +4796,37 @@ app.post('/api/youtube/info', async (req: Request, res: Response) => {
       all_proxy: vpn.socksProxy
     } : {};
 
+    let details: YouTubeVideoDetails | null = null;
+    let usedEngine = engine === 'pytubefix' ? 'pytubefix' : 'ytdlp';
+
     if (engine === 'pytubefix') {
-      // Use pytubefix helper
-      const helperScript = path.join(process.cwd(), 'youtube_pytubefix_helper.py');
-      const pyArgs = [
-        helperScript, 
-        'info', 
-        trimmedUrl, 
-        poPort || 'none',
-        vpn.isRunning ? vpn.httpProxy : 'none'
-      ];
-
-      const { stdout, stderr } = await execFileAsync('python3', pyArgs, {
-        maxBuffer: 50 * 1024 * 1024,
-        timeout: 45000,
-        env: { ...process.env, ...vpnEnv }
-      });
-
-      const details = JSON.parse(stdout);
-      details.engine = 'pytubefix';
-      details.vpnUsed = vpn.isRunning;
-      details.vpnProxy = vpn.isRunning ? vpn.httpProxy : undefined;
-      return res.json({ success: true, details, engine: 'pytubefix', vpnUsed: vpn.isRunning });
-    }
-
-    // Default: yt-dlp
-    const nodePath = process.execPath || '/usr/local/bin/node';
-    const args = [
-      '-m', 'yt_dlp',
-      '--dump-single-json',
-      '--simulate',
-      '--no-playlist',
-      '--no-warnings',
-      '--js-runtimes', `node:${nodePath}`
-    ];
-
-    if (vpn.isRunning) {
-      args.push('--proxy', vpn.httpProxy);
-      args.push('--extractor-args', 'youtube:player-client=web,android');
-    }
-
-    if (poTokenState.isRunning) {
-      args.push('--extractor-args', `youtubepot-bgutilhttp:base_url=http://127.0.0.1:${poTokenState.port}`);
-    }
-
-    args.push(trimmedUrl);
-
-    const { stdout } = await execFileAsync('python3', args, {
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: 45000,
-      env: { ...process.env, ...vpnEnv }
-    });
-
-    const data = JSON.parse(stdout);
-    const duration = typeof data.duration === 'number' ? data.duration : 0;
-    const viewCount = typeof data.view_count === 'number' ? data.view_count : 0;
-
-    // Pick best thumbnail
-    let bestThumbnail = data.thumbnail || '';
-    if (Array.isArray(data.thumbnails) && data.thumbnails.length > 0) {
-      const sortedThumbs = [...data.thumbnails].sort((a: any, b: any) => (b.width || 0) - (a.width || 0));
-      if (sortedThumbs[0]?.url) {
-        bestThumbnail = sortedThumbs[0].url;
+      try {
+        details = await getPytubefixVideoDetails(trimmedUrl, poPort, vpn, vpnEnv);
+      } catch (ptErr: any) {
+        console.warn('[YouTube Info] pytubefix failed, trying yt-dlp fallback:', ptErr?.message);
+        try {
+          details = await getYtDlpVideoDetails(trimmedUrl, poPort, vpn, vpnEnv);
+          usedEngine = 'ytdlp';
+        } catch (ytdlpErr: any) {
+          throw new Error(`pytubefix: ${ptErr?.message || 'failed'}; yt-dlp: ${ytdlpErr?.message || 'failed'}`);
+        }
       }
-    }
-
-    // Parse formats to find available heights and approx sizes
-    const formats: any[] = Array.isArray(data.formats) ? data.formats : [];
-    const heightMap = new Map<number, { formatId: string; approxBytes: number; fps?: number }>();
-
-    for (const f of formats) {
-      const h = f.height;
-      if (typeof h === 'number' && h > 0 && f.vcodec !== 'none') {
-        const existing = heightMap.get(h);
-        const fSize = f.filesize || f.filesize_approx || (f.tbr && duration ? Math.round((f.tbr * 1000 / 8) * duration) : 0);
-        if (!existing || (fSize > existing.approxBytes)) {
-          heightMap.set(h, {
-            formatId: f.format_id,
-            approxBytes: fSize,
-            fps: f.fps
-          });
+    } else {
+      // Default: yt-dlp first
+      try {
+        details = await getYtDlpVideoDetails(trimmedUrl, poPort, vpn, vpnEnv);
+      } catch (ytdlpErr: any) {
+        console.warn('[YouTube Info] yt-dlp failed, trying pytubefix fallback:', ytdlpErr?.message);
+        try {
+          details = await getPytubefixVideoDetails(trimmedUrl, poPort, vpn, vpnEnv);
+          usedEngine = 'pytubefix';
+        } catch (ptErr: any) {
+          throw new Error(`yt-dlp: ${ytdlpErr?.message || 'failed'}; pytubefix: ${ptErr?.message || 'failed'}`);
         }
       }
     }
 
-    const targetHeights = [2160, 1440, 1080, 720, 480, 360, 240, 144];
-    const availableHeights = targetHeights.filter(h => heightMap.has(h));
-    if (availableHeights.length === 0) {
-      // Fallback: collect any heights available
-      Array.from(heightMap.keys()).sort((a, b) => b - a).forEach(h => availableHeights.push(h));
-    }
-
-    const qualities: YouTubeQualityOption[] = [];
-
-    // Add Video options
-    for (const h of availableHeights) {
-      const meta = heightMap.get(h);
-      let label = `${h}p`;
-      let badge = '';
-      if (h >= 2160) { label = '4K Ultra HD (2160p)'; badge = '4K'; }
-      else if (h >= 1440) { label = '2K Quad HD (1440p)'; badge = '2K'; }
-      else if (h >= 1080) { label = 'Full HD (1080p)'; badge = 'FHD'; }
-      else if (h >= 720) { label = 'HD (720p)'; badge = 'HD'; }
-      else if (h >= 480) { label = 'Standard (480p)'; badge = 'SD'; }
-      else if (h >= 360) { label = 'Medium (360p)'; badge = '360p'; }
-      else { label = `Low (${h}p)`; badge = `${h}p`; }
-
-      const approxSize = meta?.approxBytes ? formatBytesHuman(meta.approxBytes) : '';
-
-      qualities.push({
-        id: `video_${h}p`,
-        label,
-        resolution: `${h}p`,
-        ext: 'mp4',
-        type: 'video',
-        approxSize,
-        fps: meta?.fps,
-        qualityBadge: badge
-      });
-    }
-
-    // Always add a "Best Available Video" option
-    qualities.push({
-      id: 'video_best',
-      label: 'بهترین کیفیت ممکن (Best Quality)',
-      ext: 'mp4',
-      type: 'video',
-      qualityBadge: 'BEST'
-    });
-
-    // Add Audio options (MP3 & M4A)
-    const audio320Size = duration ? formatBytesHuman(Math.round((320 * 1000 / 8) * duration)) : '';
-    const audio128Size = duration ? formatBytesHuman(Math.round((128 * 1000 / 8) * duration)) : '';
-
-    qualities.push(
-      {
-        id: 'audio_mp3_high',
-        label: 'صوت MP3 با کیفیت بالا (320kbps)',
-        ext: 'mp3',
-        type: 'audio',
-        approxSize: audio320Size,
-        qualityBadge: 'MP3 320k'
-      },
-      {
-        id: 'audio_mp3_std',
-        label: 'صوت MP3 کیفیت معمولی (128kbps)',
-        ext: 'mp3',
-        type: 'audio',
-        approxSize: audio128Size,
-        qualityBadge: 'MP3 128k'
-      },
-      {
-        id: 'audio_m4a',
-        label: 'صوت M4A / AAC (صدای اصلی ویدیو)',
-        ext: 'm4a',
-        type: 'audio',
-        approxSize: audio128Size,
-        qualityBadge: 'M4A'
-      }
-    );
-
-    const details: YouTubeVideoDetails = {
-      id: data.id || '',
-      title: data.title || 'YouTube Video',
-      url: trimmedUrl,
-      uploader: data.uploader || data.channel || 'ناشناس',
-      channelUrl: data.uploader_url || data.channel_url || '',
-      thumbnail: bestThumbnail,
-      duration,
-      durationFormatted: formatDurationSeconds(duration),
-      viewCount,
-      viewCountFormatted: formatViewsCount(viewCount),
-      uploadDate: data.upload_date ? `${data.upload_date.slice(0, 4)}-${data.upload_date.slice(4, 6)}-${data.upload_date.slice(6, 8)}` : '',
-      description: data.description ? data.description.substring(0, 300) : '',
-      engine: 'ytdlp',
-      vpnUsed: vpn.isRunning,
-      vpnProxy: vpn.isRunning ? vpn.httpProxy : undefined,
-      qualities
-    };
-
-    res.json({ success: true, details, engine: 'ytdlp', vpnUsed: vpn.isRunning });
+    res.json({ success: true, details, engine: usedEngine, vpnUsed: vpn.isRunning });
   } catch (err: any) {
     console.error('YouTube info extraction error:', err);
     res.status(500).json({
@@ -4983,6 +4834,189 @@ app.post('/api/youtube/info', async (req: Request, res: Response) => {
     });
   }
 });
+
+// Helper for pytubefix video details
+async function getPytubefixVideoDetails(trimmedUrl: string, poPort: string, vpn: any, vpnEnv: any): Promise<YouTubeVideoDetails> {
+  const helperScript = path.join(process.cwd(), 'youtube_pytubefix_helper.py');
+  const pyArgs = [
+    helperScript, 
+    'info', 
+    trimmedUrl, 
+    poPort || 'none',
+    vpn.isRunning ? vpn.httpProxy : 'none'
+  ];
+
+  const { stdout } = await execFileAsync('python3', pyArgs, {
+    maxBuffer: 50 * 1024 * 1024,
+    timeout: 45000,
+    env: { ...process.env, ...vpnEnv }
+  });
+
+  const details = JSON.parse(stdout);
+  details.engine = 'pytubefix';
+  details.vpnUsed = vpn.isRunning;
+  details.vpnProxy = vpn.isRunning ? vpn.httpProxy : undefined;
+  return details;
+}
+
+// Helper for yt-dlp video details
+async function getYtDlpVideoDetails(trimmedUrl: string, poPort: string, vpn: any, vpnEnv: any): Promise<YouTubeVideoDetails> {
+  const nodePath = process.execPath || '/usr/local/bin/node';
+  const args = [
+    '-m', 'yt_dlp',
+    '--dump-single-json',
+    '--simulate',
+    '--no-playlist',
+    '--no-warnings'
+  ];
+
+  if (fs.existsSync(nodePath)) {
+    args.push('--js-runtimes', `node:${nodePath}`);
+  }
+
+  if (vpn.isRunning) {
+    args.push('--proxy', vpn.httpProxy);
+  }
+
+  if (poTokenState.isRunning) {
+    args.push('--extractor-args', `youtubepot-bgutilhttp:base_url=http://127.0.0.1:${poTokenState.port}`);
+  }
+
+  args.push(trimmedUrl);
+
+  const { stdout } = await execFileAsync('python3', args, {
+    maxBuffer: 50 * 1024 * 1024,
+    timeout: 45000,
+    env: { ...process.env, ...vpnEnv }
+  });
+
+  const data = JSON.parse(stdout);
+  const duration = typeof data.duration === 'number' ? data.duration : 0;
+  const viewCount = typeof data.view_count === 'number' ? data.view_count : 0;
+
+  // Pick best thumbnail
+  let bestThumbnail = data.thumbnail || '';
+  if (Array.isArray(data.thumbnails) && data.thumbnails.length > 0) {
+    const sortedThumbs = [...data.thumbnails].sort((a: any, b: any) => (b.width || 0) - (a.width || 0));
+    if (sortedThumbs[0]?.url) {
+      bestThumbnail = sortedThumbs[0].url;
+    }
+  }
+
+  // Parse formats to find available heights and approx sizes
+  const formats: any[] = Array.isArray(data.formats) ? data.formats : [];
+  const heightMap = new Map<number, { formatId: string; approxBytes: number; fps?: number }>();
+
+  for (const f of formats) {
+    const h = f.height;
+    if (typeof h === 'number' && h > 0 && f.vcodec !== 'none') {
+      const existing = heightMap.get(h);
+      const fSize = f.filesize || f.filesize_approx || (f.tbr && duration ? Math.round((f.tbr * 1000 / 8) * duration) : 0);
+      if (!existing || (fSize > existing.approxBytes)) {
+        heightMap.set(h, {
+          formatId: f.format_id,
+          approxBytes: fSize,
+          fps: f.fps
+        });
+      }
+    }
+  }
+
+  const targetHeights = [2160, 1440, 1080, 720, 480, 360, 240, 144];
+  const availableHeights = targetHeights.filter(h => heightMap.has(h));
+  if (availableHeights.length === 0) {
+    // Fallback: collect any heights available
+    Array.from(heightMap.keys()).sort((a, b) => b - a).forEach(h => availableHeights.push(h));
+  }
+
+  const qualities: YouTubeQualityOption[] = [];
+
+  // Add Video options
+  for (const h of availableHeights) {
+    const meta = heightMap.get(h);
+    let label = `${h}p`;
+    let badge = '';
+    if (h >= 2160) { label = '4K Ultra HD (2160p)'; badge = '4K'; }
+    else if (h >= 1440) { label = '2K Quad HD (1440p)'; badge = '2K'; }
+    else if (h >= 1080) { label = 'Full HD (1080p)'; badge = 'FHD'; }
+    else if (h >= 720) { label = 'HD (720p)'; badge = 'HD'; }
+    else if (h >= 480) { label = 'Standard (480p)'; badge = 'SD'; }
+    else if (h >= 360) { label = 'Medium (360p)'; badge = '360p'; }
+    else { label = `Low (${h}p)`; badge = `${h}p`; }
+
+    const approxSize = meta?.approxBytes ? formatBytesHuman(meta.approxBytes) : '';
+
+    qualities.push({
+      id: `video_${h}p`,
+      label,
+      resolution: `${h}p`,
+      ext: 'mp4',
+      type: 'video',
+      approxSize,
+      fps: meta?.fps,
+      qualityBadge: badge
+    });
+  }
+
+  // Always add a "Best Available Video" option
+  qualities.push({
+    id: 'video_best',
+    label: 'بهترین کیفیت ممکن (Best Quality)',
+    ext: 'mp4',
+    type: 'video',
+    qualityBadge: 'BEST'
+  });
+
+  // Add Audio options (MP3 & M4A)
+  const audio320Size = duration ? formatBytesHuman(Math.round((320 * 1000 / 8) * duration)) : '';
+  const audio128Size = duration ? formatBytesHuman(Math.round((128 * 1000 / 8) * duration)) : '';
+
+  qualities.push(
+    {
+      id: 'audio_mp3_high',
+      label: 'صوت MP3 با کیفیت بالا (320kbps)',
+      ext: 'mp3',
+      type: 'audio',
+      approxSize: audio320Size,
+      qualityBadge: 'MP3 320k'
+    },
+    {
+      id: 'audio_mp3_std',
+      label: 'صوت MP3 کیفیت معمولی (128kbps)',
+      ext: 'mp3',
+      type: 'audio',
+      approxSize: audio128Size,
+      qualityBadge: 'MP3 128k'
+    },
+    {
+      id: 'audio_m4a',
+      label: 'صوت M4A / AAC (صدای اصلی ویدیو)',
+      ext: 'm4a',
+      type: 'audio',
+      approxSize: audio128Size,
+      qualityBadge: 'M4A'
+    }
+  );
+
+  return {
+    id: data.id || '',
+    title: data.title || 'YouTube Video',
+    url: trimmedUrl,
+    uploader: data.uploader || data.channel || 'ناشناس',
+    channelUrl: data.uploader_url || data.channel_url || '',
+    thumbnail: bestThumbnail,
+    duration,
+    durationFormatted: formatDurationSeconds(duration),
+    viewCount,
+    viewCountFormatted: formatViewsCount(viewCount),
+    uploadDate: data.upload_date ? `${data.upload_date.slice(0, 4)}-${data.upload_date.slice(4, 6)}-${data.upload_date.slice(6, 8)}` : '',
+    description: data.description ? data.description.substring(0, 300) : '',
+    engine: 'ytdlp',
+    vpnUsed: vpn.isRunning,
+    vpnProxy: vpn.isRunning ? vpn.httpProxy : undefined,
+    qualities
+  };
+}
 
 // POST /api/youtube/download - Start background download job with selected engine
 app.post('/api/youtube/download', async (req: Request, res: Response) => {
@@ -5067,7 +5101,6 @@ app.post('/api/youtube/download', async (req: Request, res: Response) => {
 
       if (vpn.isRunning) {
         childArgs.push('--proxy', vpn.httpProxy);
-        childArgs.push('--extractor-args', 'youtube:player-client=web,android');
       }
 
       if (poTokenState.isRunning) {
@@ -5255,23 +5288,21 @@ async function ensurePrerequisitesOnBoot() {
     }
 
     // Quick check if python packages (yt-dlp, pytubefix) are present
-    const reqFile = path.join(process.cwd(), 'requirements.txt');
-    if (fs.existsSync(reqFile)) {
-      exec('python3 -c "import yt_dlp, pytubefix"', (err) => {
-        if (err) {
-          console.log('[Prerequisites] Missing Python modules detected. Auto-installing requirements.txt...');
-          exec('pip3 install --no-cache-dir --break-system-packages -r requirements.txt || pip3 install --no-cache-dir -r requirements.txt', (installErr) => {
-            if (installErr) {
-              console.error('[Prerequisites] Auto-install warning:', installErr.message);
-            } else {
-              console.log('[Prerequisites] All requirements installed successfully.');
-            }
-          });
-        } else {
-          console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix) verified.');
-        }
-      });
-    }
+    exec('python3 -c "import yt_dlp, pytubefix"', (err) => {
+      if (err) {
+        console.log('[Prerequisites] Missing Python modules (yt-dlp/pytubefix) detected. Auto-installing...');
+        const installCmd = 'python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider || pip3 install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider || (curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --break-system-packages && python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider)';
+        exec(installCmd, (installErr) => {
+          if (installErr) {
+            console.error('[Prerequisites] Auto-install warning:', installErr.message);
+          } else {
+            console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix) installed successfully.');
+          }
+        });
+      } else {
+        console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix) verified.');
+      }
+    });
   } catch (e: any) {
     console.warn('[Prerequisites] Boot verification skipped:', e.message);
   }
