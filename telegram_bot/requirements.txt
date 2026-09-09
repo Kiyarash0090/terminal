@@ -9,3 +9,4 @@ httpx[socks]
 aiohttp-socks
 yt-dlp
 bgutil-ytdlp-pot-provider
+pytubefix

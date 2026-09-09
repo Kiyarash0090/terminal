@@ -1,9 +1,9 @@
 import React from 'react';
-import { Activity, Terminal as TerminalIcon, FolderOpen, Cpu, Globe, Youtube } from 'lucide-react';
+import { Terminal as TerminalIcon, FolderOpen, Cpu, Globe, Youtube } from 'lucide-react';
 import { Language } from '../types';
 import { translations } from '../locales/translations';
 
-export type ActiveTab = 'monitoring' | 'youtube' | 'terminal' | 'fileManager' | 'processManager' | 'vpnManager';
+export type ActiveTab = 'terminal' | 'fileManager' | 'processManager' | 'vpnManager' | 'youtube';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -15,12 +15,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, lang }
   const t = translations[lang];
 
   const navItems = [
-    { id: 'monitoring' as ActiveTab, label: t.monitoring, icon: Activity, color: 'text-emerald-500' },
-    { id: 'youtube' as ActiveTab, label: (t as any).youtubeManager || (lang === 'fa' ? 'بخش یوتیوب' : 'YouTube Manager'), icon: Youtube, color: 'text-rose-500' },
     { id: 'terminal' as ActiveTab, label: t.terminal, icon: TerminalIcon, color: 'text-blue-500' },
     { id: 'fileManager' as ActiveTab, label: t.fileManager, icon: FolderOpen, color: 'text-amber-500' },
     { id: 'processManager' as ActiveTab, label: t.processManager, icon: Cpu, color: 'text-purple-500' },
     { id: 'vpnManager' as ActiveTab, label: t.vpnManager, icon: Globe, color: 'text-indigo-500' },
+    { id: 'youtube' as ActiveTab, label: (t as any).youtubeManager || (lang === 'fa' ? 'بخش یوتیوب' : 'YouTube Manager'), icon: Youtube, color: 'text-rose-500' },
   ];
 
 

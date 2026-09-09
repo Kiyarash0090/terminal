@@ -20,11 +20,11 @@ import {
   ChevronUp,
   Layers,
   Lock,
-  Activity,
   FileCode,
   HardDrive,
   RefreshCw,
-  Server
+  Server,
+  Youtube
 } from 'lucide-react';
 import { Language } from '../types';
 
@@ -103,12 +103,12 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
   const categories = [
     { id: 'all', nameFa: 'همه بخش‌ها', nameEn: 'All Sections' },
     { id: 'security', nameFa: 'احراز هویت و امنیت', nameEn: 'Auth & Security' },
+    { id: 'youtube', nameFa: 'بخش یوتیوب و دانلود', nameEn: 'YouTube & Downloader' },
     { id: 'terminal', nameFa: 'ترمینال و دستورات', nameEn: 'Terminal & CLI' },
     { id: 'vpn', nameFa: 'VPN و تانل سرور', nameEn: 'VPN & Tunnel' },
     { id: 'filemanager', nameFa: 'مدیریت فایل و دیتابیس', nameEn: 'File & DB Manager' },
     { id: 'process', nameFa: 'پردازش‌ها و پایتون', nameEn: 'Processes & Python' },
     { id: 'telegram', nameFa: 'ربات تلگرام', nameEn: 'Telegram Bot' },
-    { id: 'monitoring', nameFa: 'پایش منابع سرور', nameEn: 'System Monitoring' },
   ];
 
   // Comprehensive documentation sections data
@@ -464,38 +464,34 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
       ),
     },
     {
-      id: 'monitoring',
-      category: 'monitoring',
-      titleFa: '۷. پایش زنده منابع سرور (System Monitoring)',
-      titleEn: '7. Live System Monitoring & Resource Analytics',
-      icon: Activity,
-      badgeFa: 'زنده',
-      badgeEn: 'Realtime',
-      badgeColor: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-      summaryFa: 'نمودارهای زنده CPU, RAM, Disk و ترافیک شبکه (Download/Upload) با نرخ بروزرسانی قابل تنظیم.',
-      summaryEn: 'Real-time charts for CPU, RAM, Disk, and Rx/Tx Network speeds with variable refresh rate.',
+      id: 'youtube',
+      category: 'youtube',
+      titleFa: '۷. بخش یوتیوب و دانلود ویدیو (YouTube Hub)',
+      titleEn: '7. YouTube Downloader & Media Hub',
+      icon: Youtube,
+      badgeFa: 'چندموتوره',
+      badgeEn: 'Multi-Engine',
+      badgeColor: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
+      summaryFa: 'استخراج اطلاعات و دانلود ویدیو و صوت یوتیوب با yt-dlp و pytubefix، اتصال خودکار به VPN و مدیریت دانلودها.',
+      summaryEn: 'Extract and download YouTube videos/audio via yt-dlp and pytubefix with automatic VPN proxy routing.',
       detailsFa: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
-            داشبورد پایش منابع تمام شاخص‌های کلیدی سخت‌افزار سرور را با استفاده از نمودارهای وکتوری زنده نمایش می‌دهد.
+            بخش یوتیوب امکان استخراج متادیتا، لیست کیفیت‌های ویدیویی (1080p, 720p, 480p, 360p) و فرمت‌های صوتی (MP3 320k, MP3 128k, M4A) را با دو موتور yt-dlp و pytubefix فراهم می‌کند.
           </p>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[11px] text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px] text-center">
             <div className="p-2 rounded-xl bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10">
-              <span className="text-blue-500 font-bold block text-sm">CPU</span>
-              <span className="text-[10px] text-neutral-500">مصرف پردازنده و هسته‌ها</span>
+              <span className="text-rose-500 font-bold block text-sm">yt-dlp</span>
+              <span className="text-[10px] text-neutral-500">موتور اصلی با پشتیبانی Node JS Runtime</span>
             </div>
             <div className="p-2 rounded-xl bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10">
-              <span className="text-purple-500 font-bold block text-sm">RAM</span>
-              <span className="text-[10px] text-neutral-500">حافظه استفاده‌شده و آزاد</span>
+              <span className="text-emerald-500 font-bold block text-sm">VPN PROXY</span>
+              <span className="text-[10px] text-neutral-500">هدایت خودکار ترافیک از پروکسی ۱۰۸۰۹</span>
             </div>
             <div className="p-2 rounded-xl bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10">
-              <span className="text-amber-500 font-bold block text-sm">DISK</span>
-              <span className="text-[10px] text-neutral-500">فضای ذخیره‌سازی اصلی</span>
-            </div>
-            <div className="p-2 rounded-xl bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10">
-              <span className="text-emerald-500 font-bold block text-sm">NETWORK</span>
-              <span className="text-[10px] text-neutral-500">پهنای باند Rx / Tx</span>
+              <span className="text-blue-500 font-bold block text-sm">pytubefix</span>
+              <span className="text-[10px] text-neutral-500">موتور کمکی سریع پایتون</span>
             </div>
           </div>
         </div>
@@ -503,7 +499,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
       detailsEn: (
         <div className="space-y-3 text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
           <p>
-            Displays CPU, Memory, Disk usage, and active network throughput (Rx/Tx) via SVG live visual charts.
+            Extract metadata, format qualities, and download MP4 video / MP3 audio using yt-dlp or pytubefix with automatic VPN routing.
           </p>
         </div>
       ),

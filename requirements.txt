@@ -27,3 +27,4 @@ socksio
 httpx[socks]
 aiohttp-socks
 bgutil-ytdlp-pot-provider
+pytubefix

@@ -33,6 +33,37 @@ const clearPingResults = () => {
   }
 };
 
+/**
+ * کپی متن به کلیپ‌بورد با پشتیبانی از روش مدرن و پشتیبان (Fallback)
+ */
+const safeCopyToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    console.warn('navigator.clipboard.writeText failed, using fallback', err);
+  }
+
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    console.error('Fallback clipboard copy failed', err);
+    return false;
+  }
+};
+
 interface VpnConfigItem {
   index: number;
   name: string;
@@ -42,8 +73,104 @@ interface VpnConfigItem {
     success: boolean;
     output: string;
     loading?: boolean;
+    log?: string;
+    speedKbps?: number;
+    speedMbps?: number;
+    speedDisplay?: string;
+    elapsedSec?: number;
+    ping?: number;
   };
 }
+
+/**
+ * استخراج سرعت دانلود (بر حسب کیلوبایت بر ثانیه KB/s) برای مقایسه و مرتب‌سازی دقیق کانفیگ‌ها
+ */
+const getDownloadSpeedKbps = (cfg: VpnConfigItem): number => {
+  if (!cfg.testResult || !cfg.testResult.success) return -1;
+
+  if (typeof cfg.testResult.speedKbps === 'number' && cfg.testResult.speedKbps > 0) {
+    return cfg.testResult.speedKbps;
+  }
+  if (typeof cfg.testResult.speedMbps === 'number' && cfg.testResult.speedMbps > 0) {
+    return cfg.testResult.speedMbps * 1024;
+  }
+
+  const text = (cfg.testResult.output || '') + ' ' + (cfg.testResult.log || '');
+  if (!text) return 0;
+
+  // 1. الگوی سرعت دانلود یوتیوب (yt-dlp)
+  const ytMatch = text.match(/(?:سرعت(?: دانلود)?|speed)[\s:]+([\d\.]+)\s*(mbps|mb\/s|mib\/s|kbps|kb\/s|kib\/s|gbps|gb\/s)/i);
+  if (ytMatch) {
+    const val = parseFloat(ytMatch[1]);
+    const unit = ytMatch[2].toLowerCase();
+    if (unit.includes('g')) return val * 1024 * 1024;
+    if (unit.includes('m')) return val * 1024;
+    return val;
+  }
+
+  // 2. الگوی استاندارد تست دانلود Cloudflare/Speed
+  const dlMatch = text.match(/(?:دانلود|download)[\s:]+([\d\.]+)\s*(mbps|mb\/s|kbps|kb\/s)/i);
+  if (dlMatch) {
+    const val = parseFloat(dlMatch[1]);
+    const unit = dlMatch[2].toLowerCase();
+    if (unit.includes('m')) return val * 1024;
+    return val;
+  }
+
+  // 3. الگوی پیشرفت yt-dlp مثل "at 1.50MiB/s"
+  const atMatch = text.match(/at\s+([\d\.]+)\s*([kKmMgG]i?B\/s)/i);
+  if (atMatch) {
+    const val = parseFloat(atMatch[1]);
+    const unit = atMatch[2].toLowerCase();
+    if (unit.includes('m')) return val * 1024;
+    if (unit.includes('g')) return val * 1024 * 1024;
+    return val;
+  }
+
+  return 0;
+};
+
+/**
+ * مرتب‌سازی هوشمند کانفیگ‌ها:
+ * ۱. کانفیگ‌های سالم قبل از کانفیگ‌های ناسالم/تست‌نشده قرار می‌گیرند.
+ * ۲. بین کانفیگ‌های سالم، کانفیگ‌هایی که سرعت دانلود بیشتری (مخصوصاً از یوتیوب) دارند در صدر لیست قرار می‌گیرند.
+ */
+const sortConfigs = (list: VpnConfigItem[]): VpnConfigItem[] => {
+  return [...list].sort((a, b) => {
+    const aSuccess = Boolean(a.testResult?.success);
+    const bSuccess = Boolean(b.testResult?.success);
+
+    // کانفیگ‌های سالم اول می‌آیند
+    if (aSuccess && !bSuccess) return -1;
+    if (!aSuccess && bSuccess) return 1;
+
+    // در بین کانفیگ‌های سالم: اولویت بالاتر برای سرعت دانلود بیشتر
+    if (aSuccess && bSuccess) {
+      const speedA = getDownloadSpeedKbps(a);
+      const speedB = getDownloadSpeedKbps(b);
+      if (speedA !== speedB) {
+        return speedB - speedA; // سرعت دانلود بیشتر، بالاتر در لیست
+      }
+
+      // در صورت برابر بودن سرعت دانلود، پینگ کمتر ترجیح داده می‌شود
+      const pingA = a.testResult?.ping ?? (a.testResult?.output?.match(/پینگ:\s*([\d\.]+)/)?.[1] ? parseFloat(a.testResult.output.match(/پینگ:\s*([\d\.]+)/)![1]) : 99999);
+      const pingB = b.testResult?.ping ?? (b.testResult?.output?.match(/پینگ:\s*([\d\.]+)/)?.[1] ? parseFloat(b.testResult.output.match(/پینگ:\s*([\d\.]+)/)![1]) : 99999);
+      if (pingA !== pingB) {
+        return pingA - pingB;
+      }
+
+      return a.index - b.index;
+    }
+
+    // برای کانفیگ‌های غیرسالم: حفظ ترتیب
+    const aTested = Boolean(a.testResult && !a.testResult.loading);
+    const bTested = Boolean(b.testResult && !b.testResult.loading);
+    if (!aTested && bTested) return -1;
+    if (aTested && !bTested) return 1;
+
+    return a.index - b.index;
+  });
+};
 
 interface IpInfo {
   ip?: string;
@@ -85,6 +212,8 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
   const [testingAll, setTestingAll] = useState(false);
   const [testingYtdlpIndex, setTestingYtdlpIndex] = useState<number | null>(null);
   const [copiedConfigIndex, setCopiedConfigIndex] = useState<number | null>(null);
+  const [copiedBulkConfigs, setCopiedBulkConfigs] = useState(false);
+  const [copiedAllConfigs, setCopiedAllConfigs] = useState(false);
   const [testVideoUrl, setTestVideoUrl] = useState('https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R');
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -163,12 +292,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
           }
           return c;
         });
-        merged.sort((a, b) => {
-          if (a.testResult?.success && !b.testResult?.success) return -1;
-          if (!a.testResult?.success && b.testResult?.success) return 1;
-          return 0;
-        });
-        setConfigs(merged);
+        setConfigs(sortConfigs(merged));
       }
     } catch (err: any) {
       setMessage({ text: isFa ? 'خطا در دریافت کانفیگ‌ها' : 'Error fetching configs', type: 'error' });
@@ -366,6 +490,71 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     }
   };
 
+  const handleSelectHealthyOnly = () => {
+    const healthy = configs.filter(c => c.testResult?.success);
+    setSelectedIndices(healthy.map(c => c.index));
+  };
+
+  const handleBulkCopy = async () => {
+    if (selectedIndices.length === 0) return;
+    const selectedConfigs = configs
+      .filter(c => selectedIndices.includes(c.index) && c.config && c.config.trim())
+      .map(c => c.config.trim());
+
+    if (selectedConfigs.length === 0) {
+      setMessage({
+        text: isFa ? 'هیچ کانفیگی برای کپی یافت نشد' : 'No configs found to copy',
+        type: 'error'
+      });
+      return;
+    }
+
+    const textToCopy = selectedConfigs.join('\n');
+    const ok = await safeCopyToClipboard(textToCopy);
+    if (ok) {
+      setCopiedBulkConfigs(true);
+      setMessage({
+        text: isFa
+          ? `تعداد ${selectedConfigs.length} کانفیگ انتخابی با موفقیت در کلیپ‌بورد کپی شد.`
+          : `Copied ${selectedConfigs.length} selected configs to clipboard.`,
+        type: 'success'
+      });
+      setTimeout(() => setCopiedBulkConfigs(false), 2500);
+    } else {
+      setMessage({
+        text: isFa ? 'خطا در کپی کانفیگ‌ها به کلیپ‌بورد' : 'Failed to copy configs to clipboard',
+        type: 'error'
+      });
+    }
+  };
+
+  const handleCopyAllConfigs = async () => {
+    if (configs.length === 0) return;
+    const allConfigsText = configs
+      .map(c => c.config?.trim())
+      .filter(Boolean)
+      .join('\n');
+
+    if (!allConfigsText) return;
+
+    const ok = await safeCopyToClipboard(allConfigsText);
+    if (ok) {
+      setCopiedAllConfigs(true);
+      setMessage({
+        text: isFa
+          ? `تمامی کانفیگ‌ها (${configs.length} مورد) در کلیپ‌بورد کپی شدند.`
+          : `Copied all ${configs.length} configs to clipboard.`,
+        type: 'success'
+      });
+      setTimeout(() => setCopiedAllConfigs(false), 2500);
+    } else {
+      setMessage({
+        text: isFa ? 'خطا در کپی کانفیگ‌ها به کلیپ‌بورد' : 'Failed to copy configs to clipboard',
+        type: 'error'
+      });
+    }
+  };
+
   const handleBulkDelete = () => {
     if (selectedIndices.length === 0) return;
     setDeleteModal({
@@ -545,7 +734,17 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     }
   };
 
-  const updateSingleConfigResult = (index: number, testObj: { success: boolean; output: string; loading: boolean; log?: string }) => {
+  const updateSingleConfigResult = (index: number, testObj: {
+    success: boolean;
+    output: string;
+    loading: boolean;
+    log?: string;
+    speedKbps?: number;
+    speedMbps?: number;
+    speedDisplay?: string;
+    elapsedSec?: number;
+    ping?: number;
+  }) => {
     setConfigs(prev => {
       const target = prev.find(c => c.index === index);
       if (!target) return prev;
@@ -554,11 +753,11 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
         savePingResults({ [cacheKey]: testObj });
       }
       const updatedTarget = { ...target, testResult: testObj };
-      if (testObj.success && !testObj.loading) {
-        const rest = prev.filter(c => c.index !== index);
-        return [updatedTarget, ...rest];
+      const nextList = prev.map(c => c.index === index ? updatedTarget : c);
+      if (!testObj.loading) {
+        return sortConfigs(nextList);
       }
-      return prev.map(c => c.index === index ? updatedTarget : c);
+      return nextList;
     });
   };
 
@@ -604,7 +803,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
       const dataSpeed = await resSpeed.json();
       const isSpeedSuccess = dataSpeed.result?.[0] ?? true;
       const finalResultText = dataSpeed.result?.[1] || pingText;
-      updateSingleConfigResult(index, { success: isSpeedSuccess, output: finalResultText, loading: false });
+      updateSingleConfigResult(index, { success: isSpeedSuccess, output: finalResultText, loading: false, ping: pingVal });
     } catch (err: any) {
       updateSingleConfigResult(index, { success: false, output: err.message || 'Error', loading: false });
     }
@@ -632,17 +831,29 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
       const data = await res.json();
       const isSuccess = data.result?.[0] ?? false;
       const text = data.result?.[1] || data.error || (isSuccess ? 'تست yt-dlp موفق بود' : 'تست yt-dlp ناموفق بود');
-      updateSingleConfigResult(index, { success: isSuccess, output: text, loading: false, log: data.details?.log });
+      const details = data.details || {};
+      updateSingleConfigResult(index, {
+        success: isSuccess,
+        output: text,
+        loading: false,
+        log: details.log,
+        speedKbps: details.speed_kbps,
+        speedMbps: details.speed_mbps,
+        speedDisplay: details.speed_display,
+        elapsedSec: details.elapsed_sec
+      });
     } catch (err: any) {
       updateSingleConfigResult(index, { success: false, output: err.message || 'خطا در اجرای تست yt-dlp', loading: false });
     }
   };
 
-  const handleCopyConfig = (index: number, configStr: string) => {
+  const handleCopyConfig = async (index: number, configStr: string) => {
     if (!configStr) return;
-    navigator.clipboard.writeText(configStr);
-    setCopiedConfigIndex(index);
-    setTimeout(() => setCopiedConfigIndex(null), 2000);
+    const ok = await safeCopyToClipboard(configStr);
+    if (ok) {
+      setCopiedConfigIndex(index);
+      setTimeout(() => setCopiedConfigIndex(null), 2000);
+    }
   };
 
   const handleTestYtdlpAll = async () => {
@@ -668,6 +879,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
           chunk.map(c => handleTestYtdlp(c.index))
         );
       }
+      setConfigs(prev => sortConfigs(prev));
     } finally {
       setTestingAll(false);
     }
@@ -772,6 +984,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
         }
       }
 
+      setConfigs(prev => sortConfigs(prev));
     } catch (err: any) {
       setMessage({ text: err.message, type: 'error' });
     } finally {
@@ -805,8 +1018,8 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
     }));
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopyProxy = async (text: string) => {
+    await safeCopyToClipboard(text);
     setCopiedProxy(true);
     setTimeout(() => setCopiedProxy(false), 2000);
   };
@@ -899,7 +1112,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                   <ShieldCheck className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-500" />
                   {isFa ? 'پروکسی:' : 'Proxy:'} <strong className="text-neutral-900 dark:text-white">{status.socksProxy}</strong>
                   <button
-                    onClick={() => copyToClipboard(status.socksProxy)}
+                    onClick={() => handleCopyProxy(status.socksProxy)}
                     className="hover:text-blue-500 ml-1 cursor-pointer"
                     title={isFa ? 'کپی آدرس پروکسی' : 'Copy Proxy'}
                   >
@@ -1156,6 +1369,25 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
               )}
 
               <button
+                onClick={handleCopyAllConfigs}
+                disabled={configs.length === 0}
+                className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-800 dark:text-neutral-200 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40 whitespace-nowrap"
+                title={isFa ? 'کپی تمامی کانفیگ‌ها به کلیپ‌بورد' : 'Copy all configs to clipboard'}
+              >
+                {copiedAllConfigs ? (
+                  <>
+                    <Check className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-500" />
+                    <span>{isFa ? 'کپی شد!' : 'Copied!'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-neutral-500" />
+                    <span>{isFa ? 'کپی همه' : 'Copy All'}</span>
+                  </>
+                )}
+              </button>
+
+              <button
                 onClick={handleResetPingResults}
                 disabled={!configs.some(c => c.testResult)}
                 className="flex items-center justify-center py-1.5 px-2.5 bg-neutral-100 dark:bg-white/5 hover:bg-rose-500/10 text-neutral-700 dark:text-neutral-300 hover:text-rose-600 dark:hover:text-rose-400 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-medium transition border border-neutral-200 dark:border-white/10 cursor-pointer disabled:opacity-40"
@@ -1225,6 +1457,10 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
               />
             </div>
           </div>
+          <div className="mt-1.5 pt-1.5 border-t border-neutral-200/60 dark:border-white/5 flex items-center gap-1.5 text-[10px] text-neutral-500 dark:text-neutral-400">
+            <span className="text-amber-500 font-bold">⚡</span>
+            <span>{isFa ? 'اولویت چینش: کانفیگ‌های سالم با بالاترین سرعت دانلود از یوتیوب به‌طور خودکار در صدر لیست قرار می‌گیرند.' : 'Ranking priority: Healthy configs with the highest YouTube download speed are automatically placed at the top.'}</span>
+          </div>
         </div>
 
         {/* Configs Table / List */}
@@ -1249,31 +1485,83 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
           <div className="space-y-2.5 sm:space-y-3">
             {/* Bulk Toolbar */}
             {selectedIndices.length > 0 && (
-              <div className="flex items-center justify-between bg-neutral-100 dark:bg-white/5 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 text-[11px] sm:text-xs font-medium">
-                <label className="flex items-center gap-1.5 sm:gap-2 cursor-pointer text-neutral-700 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={selectedIndices.length === configs.length && configs.length > 0}
-                    onChange={toggleSelectAll}
-                    className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded border-neutral-300 dark:border-neutral-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                  />
-                  <span>
-                    {isFa
-                      ? `انتخاب همه (${selectedIndices.length} از ${configs.length})`
-                      : `Select All (${selectedIndices.length} of ${configs.length})`}
-                  </span>
-                </label>
+              <div className="flex flex-wrap items-center justify-between gap-2.5 bg-neutral-100 dark:bg-white/5 p-2.5 sm:p-3 rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 text-[11px] sm:text-xs font-medium">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="flex items-center gap-1.5 sm:gap-2 cursor-pointer text-neutral-700 dark:text-neutral-300 select-none">
+                    <input
+                      type="checkbox"
+                      checked={selectedIndices.length === configs.length && configs.length > 0}
+                      onChange={toggleSelectAll}
+                      className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded border-neutral-300 dark:border-neutral-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span>
+                      {isFa
+                        ? `انتخاب همه (${selectedIndices.length} از ${configs.length})`
+                        : `Select All (${selectedIndices.length} of ${configs.length})`}
+                    </span>
+                  </label>
 
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={actionLoading}
-                  className="flex items-center gap-1 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-md sm:rounded-lg text-[11px] sm:text-xs font-semibold transition cursor-pointer shadow-sm disabled:opacity-50"
-                >
-                  <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                  <span>
-                    {isFa ? `حذف ${selectedIndices.length} مورد` : `Delete ${selectedIndices.length}`}
-                  </span>
-                </button>
+                  {configs.some(c => c.testResult?.success) && (
+                    <button
+                      type="button"
+                      onClick={handleSelectHealthyOnly}
+                      className="text-[10px] sm:text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
+                      title={isFa ? 'انتخاب خودکار کانفیگ‌هایی که در تست سالم بوده‌اند' : 'Select configs that passed the test'}
+                    >
+                      <Zap className="h-3 w-3 text-amber-500" />
+                      <span>{isFa ? 'انتخاب کانفیگ‌های سالم' : 'Select healthy only'}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Copy Selected Configs Button */}
+                  <button
+                    type="button"
+                    onClick={handleBulkCopy}
+                    className="flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white rounded-md sm:rounded-lg text-[11px] sm:text-xs font-semibold transition cursor-pointer shadow-xs"
+                    title={isFa ? 'کپی تمامی کانفیگ‌های انتخاب‌شده به کلیپ‌بورد' : 'Copy all selected configs to clipboard'}
+                  >
+                    {copiedBulkConfigs ? (
+                      <>
+                        <Check className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-300" />
+                        <span>{isFa ? 'کپی شد!' : 'Copied!'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                        <span>
+                          {isFa
+                            ? `کپی ${selectedIndices.length} کانفیگ انتخابی`
+                            : `Copy ${selectedIndices.length} Selected`}
+                        </span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Bulk Delete Button */}
+                  <button
+                    type="button"
+                    onClick={handleBulkDelete}
+                    disabled={actionLoading}
+                    className="flex items-center gap-1 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white rounded-md sm:rounded-lg text-[11px] sm:text-xs font-semibold transition cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                    <span>
+                      {isFa ? `حذف (${selectedIndices.length})` : `Delete (${selectedIndices.length})`}
+                    </span>
+                  </button>
+
+                  {/* Deselect / Cancel Button */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIndices([])}
+                    className="p-1 sm:p-1.5 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-white rounded-md hover:bg-neutral-200 dark:hover:bg-white/10 transition cursor-pointer"
+                    title={isFa ? 'لغو انتخاب' : 'Clear selection'}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1285,7 +1573,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                   key={cfg.index}
                   className={`p-2.5 sm:p-4 rounded-lg sm:rounded-xl border transition flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-4 ${
                     isSelected
-                      ? 'bg-rose-500/5 border-rose-500/40 dark:bg-rose-500/10'
+                      ? 'bg-indigo-500/10 border-indigo-500/50 dark:bg-indigo-500/15 dark:border-indigo-500/60 shadow-xs'
                       : isCurrentActive
                       ? 'bg-indigo-500/5 border-indigo-500/40 dark:bg-indigo-500/10'
                       : 'bg-neutral-50 dark:bg-[#18181b] border-neutral-200 dark:border-white/5 hover:border-neutral-300 dark:hover:border-white/10'
@@ -1308,6 +1596,19 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
                         {isCurrentActive && (
                           <span className="bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-indigo-500/30">
                             {isFa ? 'فعال' : 'Active'}
+                          </span>
+                        )}
+                        {cfg.testResult?.success && getDownloadSpeedKbps(cfg) > 0 && (
+                          <span
+                            className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-md border border-emerald-500/30 flex items-center gap-1 shrink-0"
+                            title={isFa ? 'سرعت دانلود ثبت‌شده' : 'Recorded download speed'}
+                          >
+                            <Zap className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-amber-500" />
+                            <span>
+                              {getDownloadSpeedKbps(cfg) >= 1024
+                                ? `${(getDownloadSpeedKbps(cfg) / 1024).toFixed(1)} MB/s`
+                                : `${Math.round(getDownloadSpeedKbps(cfg))} KB/s`}
+                            </span>
                           </span>
                         )}
                       </div>

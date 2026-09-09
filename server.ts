@@ -5246,6 +5246,37 @@ app.use('/api/*', (req: Request, res: Response) => {
 });
 
 // ---------------------- VITE & PRODUCTION HANDLER ----------------------
+// Auto-verify and install prerequisites on server startup/deployment
+async function ensurePrerequisitesOnBoot() {
+  try {
+    const downloadsDir = path.join(process.cwd(), 'downloads');
+    if (!fs.existsSync(downloadsDir)) {
+      fs.mkdirSync(downloadsDir, { recursive: true });
+    }
+
+    // Quick check if python packages (yt-dlp, pytubefix) are present
+    const reqFile = path.join(process.cwd(), 'requirements.txt');
+    if (fs.existsSync(reqFile)) {
+      exec('python3 -c "import yt_dlp, pytubefix"', (err) => {
+        if (err) {
+          console.log('[Prerequisites] Missing Python modules detected. Auto-installing requirements.txt...');
+          exec('pip3 install --no-cache-dir --break-system-packages -r requirements.txt || pip3 install --no-cache-dir -r requirements.txt', (installErr) => {
+            if (installErr) {
+              console.error('[Prerequisites] Auto-install warning:', installErr.message);
+            } else {
+              console.log('[Prerequisites] All requirements installed successfully.');
+            }
+          });
+        } else {
+          console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix) verified.');
+        }
+      });
+    }
+  } catch (e: any) {
+    console.warn('[Prerequisites] Boot verification skipped:', e.message);
+  }
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -5263,6 +5294,8 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`ServerDash running on http://0.0.0.0:${PORT}`);
+    // Auto-verify and install prerequisites on startup
+    ensurePrerequisitesOnBoot();
     // Only launch PO Token server if explicitly enabled in config (default is false/off)
     if (poTokenState.desiredRunning) {
       startPoTokenServer();

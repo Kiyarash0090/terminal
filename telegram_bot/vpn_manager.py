@@ -9,6 +9,8 @@ import json
 import asyncio
 import subprocess
 import logging
+import re
+import time
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict
 
@@ -548,6 +550,7 @@ class VPNManager:
 
             cmd.append(video_url.strip() or "https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R")
 
+            t_start = time.time()
             p = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -556,6 +559,7 @@ class VPNManager:
 
             try:
                 stdout, stderr = await asyncio.wait_for(p.communicate(), timeout=20)
+                elapsed_sec = max(0.05, time.time() - t_start)
                 stdout_str = stdout.decode("utf-8", errors="ignore")
                 stderr_str = stderr.decode("utf-8", errors="ignore")
                 log_combined = (stdout_str + "\n" + stderr_str).strip()
@@ -585,11 +589,45 @@ class VPNManager:
 
                 max_size_reached = "larger than max-filesize" in log_norm or "aborting download" in log_norm
                 if has_downloaded_data or max_size_reached or (p.returncode == 0 and "ERROR:" not in stderr_str):
-                    size_kb = round(total_bytes / 1024, 1) if total_bytes > 0 else 500.0
-                    return True, f"▶️ دانلود موفق yt-dlp ({size_kb} KB)! آی‌پی کانفیگ «{cfg['name']}» توسط یوتیوب تمیز است.", {
+                    # Measure download speed
+                    speed_kbps = 0.0
+                    speed_match = re.search(r"at\s+([\d\.]+)\s*([kKmMgGtT]i?B/s)", log_combined)
+                    if speed_match:
+                        try:
+                            s_val = float(speed_match.group(1))
+                            s_unit = speed_match.group(2).lower()
+                            if "g" in s_unit:
+                                speed_kbps = s_val * 1024.0 * 1024.0
+                            elif "m" in s_unit:
+                                speed_kbps = s_val * 1024.0
+                            elif "k" in s_unit:
+                                speed_kbps = s_val
+                            else:
+                                speed_kbps = s_val / 1024.0
+                        except Exception:
+                            pass
+
+                    eff_bytes = total_bytes if total_bytes > 0 else (500.0 * 1024.0)
+                    if speed_kbps <= 0:
+                        speed_kbps = (eff_bytes / 1024.0) / max(0.1, elapsed_sec)
+
+                    speed_kbps = round(speed_kbps, 1)
+                    speed_mbps = round((speed_kbps * 8.0) / 1000.0, 2)
+                    size_kb = round(total_bytes / 1024.0, 1) if total_bytes > 0 else 500.0
+
+                    if speed_mbps >= 1.0:
+                        speed_display = f"{round(speed_mbps, 1)} Mbps ({round(speed_kbps / 1024.0, 2)} MB/s)"
+                    else:
+                        speed_display = f"{round(speed_kbps, 0)} KB/s ({round(speed_mbps, 2)} Mbps)"
+
+                    return True, f"▶️ دانلود موفق یوتیوب ({size_kb} KB در {round(elapsed_sec, 1)} ثانیه) | ⚡ سرعت دانلود: {speed_display}\nآی‌پی کانفیگ «{cfg['name']}» توسط یوتیوب تمیز است.", {
                         "bot_detected": False,
                         "downloaded": True,
                         "size_kb": size_kb,
+                        "speed_kbps": speed_kbps,
+                        "speed_mbps": speed_mbps,
+                        "speed_display": speed_display,
+                        "elapsed_sec": round(elapsed_sec, 2),
                         "log": log_combined
                     }
                 else:

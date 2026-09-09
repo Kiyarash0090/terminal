@@ -2,9 +2,9 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { AuthState, Language, ThemeMode, User } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar, ActiveTab } from './components/Sidebar';
+import { FooterResourceMonitor } from './components/FooterResourceMonitor';
 
 // Lazy load heavy components for better initial load
-const MonitoringDashboard = lazy(() => import('./components/MonitoringDashboard').then(m => ({ default: m.MonitoringDashboard })));
 const TerminalView = lazy(() => import('./components/TerminalView').then(m => ({ default: m.TerminalView })));
 const FileManager = lazy(() => import('./components/FileManager').then(m => ({ default: m.FileManager })));
 const ProcessManager = lazy(() => import('./components/ProcessManager').then(m => ({ default: m.ProcessManager })));
@@ -24,7 +24,7 @@ export default function App() {
     const saved = localStorage.getItem('serverdash_theme');
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
   });
-  const [activeTab, setActiveTab] = useState<ActiveTab>('monitoring');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('terminal');
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
   const [isDocOpen, setIsDocOpen] = useState(false);
   const [isTelegramBotOpen, setIsTelegramBotOpen] = useState(false);
@@ -149,7 +149,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen bg-neutral-100 dark:bg-[#0A0A0B] text-neutral-900 dark:text-gray-200 font-sans transition-colors duration-200"
+      className="min-h-screen flex flex-col bg-neutral-100 dark:bg-[#0A0A0B] text-neutral-900 dark:text-gray-200 font-sans transition-colors duration-200"
       dir={lang === 'fa' ? 'rtl' : 'ltr'}
     >
       <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div></div>}>
@@ -168,15 +168,12 @@ export default function App() {
         />
 
         {/* Main Layout Area */}
-        <div className="flex flex-col md:flex-row min-h-[calc(100vh-3rem)] sm:min-h-[calc(100vh-3.5rem)] md:min-h-[calc(100vh-4rem)]">
+        <div className="flex-1 flex flex-col md:flex-row min-h-[calc(100vh-5.5rem)] sm:min-h-[calc(100vh-6rem)] md:min-h-[calc(100vh-6.5rem)]">
           {/* Sidebar */}
           <Sidebar activeTab={activeTab} onTabChange={setActiveTab} lang={lang} />
 
           {/* Content Pane */}
           <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto">
-            <div className={activeTab === 'monitoring' ? '' : 'hidden'}>
-              <MonitoringDashboard token={auth.token} lang={lang} active={activeTab === 'monitoring'} />
-            </div>
             <div className={activeTab === 'youtube' ? '' : 'hidden'}>
               <YouTubeManager lang={lang} token={auth.token} />
             </div>
@@ -195,6 +192,9 @@ export default function App() {
             </div>
           </main>
         </div>
+
+        {/* Minimal Footer Resource Monitor (پایش منابع سرور) */}
+        <FooterResourceMonitor token={auth.token} lang={lang} />
 
         {/* Telegram Bot Modal Dialog */}
         <TelegramBotModal
