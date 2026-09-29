@@ -13,6 +13,49 @@ export interface AuthState {
   token: string | null;
 }
 
+export interface RailwayProjectUsage {
+  id: string;
+  name: string;
+  cpuUsage: number;
+  memoryUsageGb: number;
+  diskUsageGb: number;
+  networkRxGb: number;
+  networkTxGb: number;
+  ephemeralDiskUsageGb: number;
+  backupUsageGb: number;
+}
+
+export interface RailwayInfo {
+  account: string;
+  email?: string;
+  workspaceId: string;
+  workspaceName: string;
+  plan: string;
+  periodStart: string;
+  periodEnd: string;
+  daysLeft: number;
+  spent: number;
+  creditBalance: number;
+  left: number;
+  hardCap: string;
+  softLimit?: number | null;
+  isOverLimit?: boolean;
+  hasExhaustedFreePlan?: boolean;
+  state?: string;
+  planLimitText: string;
+  planLimits?: {
+    projects?: number;
+    cpu?: number;
+    ramMB?: string;
+    diskMB?: string;
+    volMB?: string;
+    includedUsageDollars?: number;
+  };
+  projects: RailwayProjectUsage[];
+  formattedText: string;
+  fetchedAt: string;
+}
+
 export interface SystemMetrics {
   timestamp: number;
   cpuPercent: number;
@@ -35,6 +78,9 @@ export interface SystemMetrics {
   loadAvg: number[];
   isContainer?: boolean;
   containerInfo?: string;
+  railwayConfigured?: boolean;
+  railwayInfo?: RailwayInfo | null;
+  railwayError?: string | null;
 }
 
 export interface FileItem {

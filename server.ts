@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import os from 'os';
+import https from 'https';
 import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import cors from 'cors';
@@ -217,6 +218,7 @@ interface ServerConfig {
   authToken: string;
   isConfigured?: boolean;
   mustChangePassword?: boolean;
+  railwayApiToken?: string;
 }
 
 function loadConfig(): ServerConfig {
@@ -289,6 +291,428 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', server: 'ServerDash', timestamp: new Date().toISOString() });
 });
 
+function getConfiguredRailwayToken(): string {
+  const token = (serverConfig.railwayApiToken || process.env.RAILWAY_API_TOKEN || process.env.RAILWAY_TOKEN || '').trim();
+  return token.replace(/^Bearer\s+/i, '').trim();
+}
+
+// ---------------------- RAILWAY GRAPHQL API INTEGRATION ----------------------
+const RAILWAY_GQL_ENDPOINT = 'https://backboard.railway.app/graphql/v2';
+
+interface RailwayCacheState {
+  data: any | null;
+  error: string | null;
+  timestamp: number;
+  tokenUsed: string;
+}
+
+let railwayCache: RailwayCacheState = {
+  data: null,
+  error: null,
+  timestamp: 0,
+  tokenUsed: ''
+};
+let railwayFetchInFlight: Promise<{ data: any | null; error: string | null }> | null = null;
+
+function railwayGqlRequest(token: string, query: string, variables: Record<string, any> = {}): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ query, variables });
+    const urlObj = new URL(RAILWAY_GQL_ENDPOINT);
+
+    const options: https.RequestOptions = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        'User-Agent': 'Mozilla/5.0'
+      },
+      timeout: 20000
+    };
+
+    const reqHttps = https.request(options, (res) => {
+      let rawBody = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        rawBody += chunk;
+      });
+      res.on('end', () => {
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`HTTP ${res.statusCode}: ${rawBody.slice(0, 200)}`));
+        }
+        try {
+          const parsed = JSON.parse(rawBody);
+          if (parsed.errors && Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+            const msg = parsed.errors.map((e: any) => e.message || JSON.stringify(e)).join(' | ');
+            return reject(new Error(msg));
+          }
+          resolve(parsed.data);
+        } catch (err: any) {
+          reject(new Error(`Invalid JSON from Railway API: ${err.message}`));
+        }
+      });
+    });
+
+    reqHttps.on('timeout', () => {
+      reqHttps.destroy(new Error('Railway API request timed out'));
+    });
+
+    reqHttps.on('error', (err) => {
+      reject(err);
+    });
+
+    reqHttps.write(payload);
+    reqHttps.end();
+  });
+}
+
+function formatBytesToMBString(bytes: number | undefined | null): string {
+  if (bytes == null || isNaN(Number(bytes)) || Number(bytes) <= 0) return '0MB';
+  const b = Number(bytes);
+  if (b % (1024 * 1024) === 0) {
+    return `${Math.round(b / (1024 * 1024))}MB`;
+  }
+  if (b % (1000 * 1000) === 0) {
+    return `${Math.round(b / (1000 * 1000))}MB`;
+  }
+  return `${Math.round(b / (1024 * 1024))}MB`;
+}
+
+async function fetchRailwayDataFromApi(token: string): Promise<any> {
+  let infoData: any = null;
+  try {
+    infoData = await railwayGqlRequest(
+      token,
+      `query {
+        me {
+          id
+          username
+          email
+          workspaces {
+            id
+            name
+            plan
+            projectCount
+            subscriptionPlanLimit {
+              includedUsageDollars
+              projects
+              containers { cpu memoryBytes diskBytes }
+              volumes { defaultSizeMB maxSizeMB maxPerProject }
+              project { members services }
+              observability { logRetentionDays }
+            }
+            customer {
+              id
+              creditBalance
+              remainingUsageCreditBalance
+              currentUsage
+              hasExhaustedFreePlan
+              isTrialing
+              trialDaysRemaining
+              isUsageSubscriber
+              isPrepaying
+              state
+              billingPeriod { start end }
+              usageLimit { softLimit hardLimit isOverLimit }
+            }
+          }
+        }
+      }`
+    );
+  } catch {
+    try {
+      infoData = await railwayGqlRequest(
+        token,
+        `query {
+          me {
+            id
+            username
+            email
+            workspaces {
+              id
+              name
+              plan
+              subscriptionPlanLimit
+              customer {
+                creditBalance
+                remainingUsageCreditBalance
+                currentUsage
+                hasExhaustedFreePlan
+                state
+                billingPeriod { start end }
+                usageLimit { softLimit hardLimit isOverLimit }
+              }
+            }
+          }
+        }`
+      );
+    } catch {
+      infoData = await railwayGqlRequest(
+        token,
+        `query {
+          me {
+            id
+            username
+            email
+            workspaces {
+              id
+              name
+              plan
+              customer {
+                creditBalance
+                remainingUsageCreditBalance
+                currentUsage
+                hasExhaustedFreePlan
+                state
+                billingPeriod { start end }
+                usageLimit { softLimit hardLimit isOverLimit }
+              }
+            }
+          }
+        }`
+      );
+    }
+  }
+
+  if (!infoData || !infoData.me) {
+    throw new Error('Unauthorized یا عدم دریافت اطلاعات حساب از Railway');
+  }
+
+  const me = infoData.me;
+  const workspaces: any[] = Array.isArray(me.workspaces) ? me.workspaces : [];
+  if (workspaces.length === 0) {
+    throw new Error('هیچ Workspace فعالی در این حساب Railway یافت نشد');
+  }
+
+  const ws = workspaces.find((w) => w && w.customer) || workspaces[0];
+  const customer = ws.customer || {};
+  const billingPeriod = customer.billingPeriod || {};
+
+  const periodStartRaw = billingPeriod.start ? String(billingPeriod.start) : '';
+  const periodEndRaw = billingPeriod.end ? String(billingPeriod.end) : '';
+  const periodStart = periodStartRaw ? periodStartRaw.slice(0, 10) : 'N/A';
+  const periodEnd = periodEndRaw ? periodEndRaw.slice(0, 10) : 'N/A';
+
+  let daysLeft = 0;
+  if (periodEndRaw) {
+    const endMs = new Date(periodEndRaw).getTime();
+    if (!isNaN(endMs)) {
+      daysLeft = Math.max(0, Math.floor((endMs - Date.now()) / (1000 * 60 * 60 * 24)));
+    }
+  }
+
+  const spent = Number(customer.currentUsage ?? 0);
+  const creditBalance = Number(customer.creditBalance ?? 0);
+  const left = Number(customer.remainingUsageCreditBalance ?? 0);
+  const usageLimit = customer.usageLimit;
+  const hardCap =
+    usageLimit === null || usageLimit === undefined || usageLimit.hardLimit === null || usageLimit.hardLimit === undefined
+      ? 'none'
+      : `$${usageLimit.hardLimit}`;
+
+  // Parse subscriptionPlanLimit
+  const subLimit = ws.subscriptionPlanLimit || {};
+  const limitParts: string[] = [];
+  const planLimitsStructured: Record<string, any> = {};
+
+  if (subLimit && typeof subLimit === 'object') {
+    if (subLimit.projects != null) {
+      limitParts.push(`projects<=${subLimit.projects}`);
+      planLimitsStructured.projects = subLimit.projects;
+    }
+    if (subLimit.containers?.cpu != null) {
+      limitParts.push(`cpu=${subLimit.containers.cpu}`);
+      planLimitsStructured.cpu = subLimit.containers.cpu;
+    }
+    if (subLimit.containers?.memoryBytes != null) {
+      const ramStr = formatBytesToMBString(subLimit.containers.memoryBytes);
+      limitParts.push(`ram=${ramStr}`);
+      planLimitsStructured.ramMB = ramStr;
+    }
+    if (subLimit.containers?.diskBytes != null) {
+      const diskStr = formatBytesToMBString(subLimit.containers.diskBytes);
+      limitParts.push(`disk=${diskStr}`);
+      planLimitsStructured.diskMB = diskStr;
+    }
+    const volSize = subLimit.volumes?.defaultSizeMB ?? subLimit.volumes?.maxSizeMB;
+    if (volSize != null) {
+      limitParts.push(`vol=${volSize}MB`);
+      planLimitsStructured.volMB = `${volSize}MB`;
+    }
+    if (subLimit.includedUsageDollars != null) {
+      planLimitsStructured.includedUsageDollars = subLimit.includedUsageDollars;
+    }
+  }
+
+  const planLimitText = limitParts.length > 0 ? limitParts.join(' ') : 'default';
+
+  // Fetch projects for this workspace
+  let projectEdges: any[] = [];
+  if (ws.id) {
+    try {
+      const projRes = await railwayGqlRequest(
+        token,
+        `query($w: String!) {
+          projects(workspaceId: $w, first: 20) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }`,
+        { w: ws.id }
+      );
+      projectEdges = projRes?.projects?.edges || [];
+    } catch {
+      projectEdges = [];
+    }
+  }
+
+  const measurementsList = [
+    'CPU_USAGE',
+    'MEMORY_USAGE_GB',
+    'DISK_USAGE_GB',
+    'NETWORK_RX_GB',
+    'NETWORK_TX_GB',
+    'EPHEMERAL_DISK_USAGE_GB',
+    'BACKUP_USAGE_GB'
+  ];
+
+  const projectsUsage: any[] = [];
+  for (const edge of projectEdges) {
+    const node = edge?.node;
+    if (!node || !node.id) continue;
+
+    let estRows: any[] = [];
+    try {
+      const estData = await railwayGqlRequest(
+        token,
+        `query($m: [MetricMeasurement!]!, $p: String!) {
+          estimatedUsage(measurements: $m, projectId: $p) {
+            measurement
+            estimatedValue
+          }
+        }`,
+        { m: measurementsList, p: node.id }
+      );
+      estRows = estData?.estimatedUsage || [];
+    } catch {
+      estRows = [];
+    }
+
+    const mapVal: Record<string, number> = {};
+    for (const r of estRows) {
+      if (r && r.measurement) {
+        mapVal[r.measurement] = Number(r.estimatedValue ?? 0);
+      }
+    }
+
+    projectsUsage.push({
+      id: node.id,
+      name: node.name || node.id,
+      cpuUsage: mapVal['CPU_USAGE'] ?? 0,
+      memoryUsageGb: mapVal['MEMORY_USAGE_GB'] ?? 0,
+      diskUsageGb: mapVal['DISK_USAGE_GB'] ?? 0,
+      networkRxGb: mapVal['NETWORK_RX_GB'] ?? 0,
+      networkTxGb: mapVal['NETWORK_TX_GB'] ?? 0,
+      ephemeralDiskUsageGb: mapVal['EPHEMERAL_DISK_USAGE_GB'] ?? 0,
+      backupUsageGb: mapVal['BACKUP_USAGE_GB'] ?? 0
+    });
+  }
+
+  const accountName = me.username || me.email || me.id || 'unknown';
+  const planName = ws.plan || 'FREE';
+
+  const lines: string[] = [
+    `account    : ${accountName}  plan=${planName}`,
+    `period     : ${periodStart} -> ${periodEnd}  (${daysLeft} days left)`,
+    `spent      : $${spent.toFixed(4)}`,
+    `LEFT       : $${left.toFixed(4)}`,
+    `hard cap   : ${hardCap}`,
+    `plan limit : ${planLimitText}`
+  ];
+
+  for (const p of projectsUsage) {
+    lines.push(`project    : ${p.name}`);
+    lines.push(
+      `  CPU_USAGE ${p.cpuUsage.toFixed(3)} | MEMORY ${p.memoryUsageGb.toFixed(3)} | DISK ${p.diskUsageGb.toFixed(3)} | NET_TX ${p.networkTxGb.toFixed(3)}`
+    );
+  }
+
+  return {
+    account: accountName,
+    email: me.email,
+    workspaceId: ws.id,
+    workspaceName: ws.name || '',
+    plan: planName,
+    periodStart,
+    periodEnd,
+    daysLeft,
+    spent,
+    creditBalance,
+    left,
+    hardCap,
+    softLimit: usageLimit?.softLimit ?? null,
+    isOverLimit: Boolean(usageLimit?.isOverLimit),
+    hasExhaustedFreePlan: Boolean(customer.hasExhaustedFreePlan),
+    state: customer.state || 'ACTIVE',
+    planLimitText,
+    planLimits: planLimitsStructured,
+    projects: projectsUsage,
+    formattedText: lines.join('\n'),
+    fetchedAt: new Date().toISOString()
+  };
+}
+
+async function getRailwayInfo(forceRefresh = false): Promise<{ data: any | null; error: string | null }> {
+  const token = getConfiguredRailwayToken();
+  if (!token) {
+    railwayCache = { data: null, error: null, timestamp: 0, tokenUsed: '' };
+    return { data: null, error: null };
+  }
+
+  const now = Date.now();
+  const ttl = railwayCache.error ? 20_000 : 60_000;
+  if (!forceRefresh && railwayCache.tokenUsed === token && now - railwayCache.timestamp < ttl && (railwayCache.data || railwayCache.error)) {
+    return { data: railwayCache.data, error: railwayCache.error };
+  }
+
+  if (railwayFetchInFlight && !forceRefresh) {
+    return railwayFetchInFlight;
+  }
+
+  railwayFetchInFlight = (async () => {
+    try {
+      const data = await fetchRailwayDataFromApi(token);
+      railwayCache = {
+        data,
+        error: null,
+        timestamp: Date.now(),
+        tokenUsed: token
+      };
+      return { data, error: null };
+    } catch (err: any) {
+      const errMsg = err?.message || 'خطا در دریافت اطلاعات از Railway API';
+      railwayCache = {
+        data: railwayCache.tokenUsed === token ? railwayCache.data : null,
+        error: errMsg,
+        timestamp: Date.now(),
+        tokenUsed: token
+      };
+      return { data: railwayCache.data, error: errMsg };
+    } finally {
+      railwayFetchInFlight = null;
+    }
+  })();
+
+  return railwayFetchInFlight;
+}
+
 // Authentication Status Endpoint (Public)
 app.get('/api/auth/status', (req: Request, res: Response) => {
   serverConfig = loadConfig();
@@ -296,7 +720,8 @@ app.get('/api/auth/status', (req: Request, res: Response) => {
   res.json({
     isConfigured: isReady,
     isFirstRun: !isReady,
-    username: serverConfig.username || 'admin'
+    username: serverConfig.username || 'admin',
+    hasRailwayToken: Boolean(getConfiguredRailwayToken())
   });
 });
 
@@ -308,7 +733,7 @@ app.post('/api/auth/initial-setup', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'سیستم قبلاً راه‌اندازی شده است. لطفاً با نام کاربری و رمز عبور خود وارد شوید.' });
   }
 
-  const { username, password } = req.body;
+  const { username, password, railwayApiToken } = req.body;
   if (!password || typeof password !== 'string' || password.length < 6) {
     return res.status(400).json({ error: 'رمز عبور باید حداقل ۶ کاراکتر باشد' });
   }
@@ -321,7 +746,16 @@ app.post('/api/auth/initial-setup', (req: Request, res: Response) => {
   serverConfig.isConfigured = true;
   delete serverConfig.mustChangePassword;
 
+  if (typeof railwayApiToken === 'string' && railwayApiToken.trim()) {
+    serverConfig.railwayApiToken = railwayApiToken.trim().replace(/^Bearer\s+/i, '').trim();
+  }
+
   saveConfig(serverConfig);
+
+  if (serverConfig.railwayApiToken) {
+    railwayCache = { data: null, error: null, timestamp: 0, tokenUsed: '' };
+    getRailwayInfo(true).catch(() => {});
+  }
 
   res.json({
     success: true,
@@ -337,7 +771,7 @@ app.post('/api/auth/initial-setup', (req: Request, res: Response) => {
 
 // Authentication Login Endpoint
 app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { username, password } = req.body;
+  const { username, password, railwayApiToken } = req.body;
   serverConfig = loadConfig();
 
   if (!serverConfig.isConfigured || !serverConfig.passwordHash) {
@@ -349,6 +783,13 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
   }
 
   if (username === serverConfig.username && password === serverConfig.passwordHash) {
+    if (typeof railwayApiToken === 'string' && railwayApiToken.trim()) {
+      serverConfig.railwayApiToken = railwayApiToken.trim().replace(/^Bearer\s+/i, '').trim();
+      saveConfig(serverConfig);
+      railwayCache = { data: null, error: null, timestamp: 0, tokenUsed: '' };
+      getRailwayInfo(true).catch(() => {});
+    }
+
     res.json({
       success: true,
       token: serverConfig.authToken,
@@ -369,12 +810,13 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
       username: serverConfig.username,
       role: 'Administrator',
       loginTime: new Date().toISOString()
-    }
+    },
+    hasRailwayToken: Boolean(getConfiguredRailwayToken())
   });
 });
 
 app.post('/api/auth/change-credentials', (req: Request, res: Response) => {
-  const { currentPassword, newUsername, newPassword } = req.body;
+  const { currentPassword, newUsername, newPassword, railwayApiToken } = req.body;
   if (currentPassword !== serverConfig.passwordHash) {
     return res.status(400).json({ error: 'رمز عبور فعلی نامعتبر است' });
   }
@@ -384,12 +826,75 @@ app.post('/api/auth/change-credentials', (req: Request, res: Response) => {
     serverConfig.passwordHash = newPassword;
     serverConfig.mustChangePassword = false;
   }
+  if (typeof railwayApiToken === 'string') {
+    const cleaned = railwayApiToken.trim().replace(/^Bearer\s+/i, '').trim();
+    if (cleaned) {
+      serverConfig.railwayApiToken = cleaned;
+    } else {
+      delete serverConfig.railwayApiToken;
+    }
+    railwayCache = { data: null, error: null, timestamp: 0, tokenUsed: '' };
+    if (cleaned) {
+      getRailwayInfo(true).catch(() => {});
+    }
+  }
 
   // Refresh token
   serverConfig.authToken = 'serverdash_' + Math.random().toString(36).substring(2, 12);
   saveConfig(serverConfig);
 
   res.json({ success: true, message: 'اطلاعات با موفقیت تغییر کرد', newToken: serverConfig.authToken });
+});
+
+// Railway Info & Token Management Endpoints
+app.get('/api/railway/info', async (req: Request, res: Response) => {
+  const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+  const token = getConfiguredRailwayToken();
+  if (!token) {
+    return res.json({
+      configured: false,
+      info: null,
+      error: null
+    });
+  }
+
+  const { data, error } = await getRailwayInfo(forceRefresh);
+  res.json({
+    configured: true,
+    tokenMasked: token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : '****',
+    info: data,
+    error
+  });
+});
+
+app.post('/api/railway/token', async (req: Request, res: Response) => {
+  const { railwayApiToken } = req.body;
+  serverConfig = loadConfig();
+
+  const cleaned = typeof railwayApiToken === 'string' ? railwayApiToken.trim().replace(/^Bearer\s+/i, '').trim() : '';
+  if (!cleaned) {
+    delete serverConfig.railwayApiToken;
+    saveConfig(serverConfig);
+    railwayCache = { data: null, error: null, timestamp: 0, tokenUsed: '' };
+    return res.json({
+      success: true,
+      configured: false,
+      info: null,
+      error: null
+    });
+  }
+
+  serverConfig.railwayApiToken = cleaned;
+  saveConfig(serverConfig);
+  railwayCache = { data: null, error: null, timestamp: 0, tokenUsed: '' };
+
+  const { data, error } = await getRailwayInfo(true);
+  res.json({
+    success: !error,
+    configured: true,
+    info: data,
+    error
+  });
 });
 
 // ---------------------- SYSTEM METRICS ----------------------
@@ -615,6 +1120,31 @@ app.get('/api/metrics/live', async (req: Request, res: Response) => {
     prevNetTx = currentTx;
     prevNetTime = now;
 
+    const hasRailway = Boolean(getConfiguredRailwayToken());
+    let railwayInfo: any = null;
+    let railwayError: string | null = null;
+
+    if (hasRailway) {
+      const forceRailway = req.query.refreshRailway === '1';
+      if (!forceRailway && railwayCache.data && Date.now() - railwayCache.timestamp < 60_000) {
+        railwayInfo = railwayCache.data;
+        railwayError = railwayCache.error;
+      } else {
+        try {
+          const rwRes = await Promise.race([
+            getRailwayInfo(forceRailway),
+            new Promise<{ data: any; error: string | null }>((resolve) =>
+              setTimeout(() => resolve({ data: railwayCache.data, error: railwayCache.error }), 3500)
+            )
+          ]);
+          railwayInfo = rwRes.data;
+          railwayError = rwRes.error;
+        } catch (e: any) {
+          railwayError = e?.message || null;
+        }
+      }
+    }
+
     const snapshot = {
       timestamp: now,
       cpuPercent,
@@ -636,7 +1166,10 @@ app.get('/api/metrics/live', async (req: Request, res: Response) => {
       hostname: os.hostname(),
       loadAvg: os.loadavg().map(n => Math.round(n * 100) / 100),
       isContainer: containerRes.isContainer,
-      containerInfo: containerRes.isContainer ? `منابع کانتینر (سهمیه: ${containerRes.cpuCores} هسته پردازنده، ${Math.round(containerRes.ramTotalMB / 1024 * 10) / 10} گیگابایت رم)` : undefined
+      containerInfo: containerRes.isContainer ? `منابع کانتینر (سهمیه: ${containerRes.cpuCores} هسته پردازنده، ${Math.round(containerRes.ramTotalMB / 1024 * 10) / 10} گیگابایت رم)` : undefined,
+      railwayConfigured: hasRailway,
+      railwayInfo,
+      railwayError
     };
 
     metricsHistory.push(snapshot);

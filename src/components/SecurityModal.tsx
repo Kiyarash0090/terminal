@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Shield, Lock, User, Check, AlertCircle, X } from 'lucide-react';
+import { Shield, Check, AlertCircle, X, Cloud } from 'lucide-react';
 import { Language } from '../types';
 import { translations } from '../locales/translations';
 
@@ -19,10 +19,13 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
   onCredentialsUpdated
 }) => {
   const t = translations[lang];
+  const isFa = lang === 'fa';
   const [currentPassword, setCurrentPassword] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [railwayApiToken, setRailwayApiToken] = useState('');
+  const [updateRailway, setUpdateRailway] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,13 +44,18 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
 
     setLoading(true);
     try {
+      const payload: Record<string, any> = { currentPassword, newUsername, newPassword };
+      if (updateRailway || railwayApiToken.trim()) {
+        payload.railwayApiToken = railwayApiToken.trim();
+      }
+
       const res = await fetch('/api/auth/change-credentials', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-auth-token': token || ''
         },
-        body: JSON.stringify({ currentPassword, newUsername, newPassword })
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -140,6 +148,24 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
               value={confirmPassword || ''}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="w-full mt-1 px-3 py-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs text-neutral-900 dark:text-neutral-100"
+            />
+          </div>
+
+          <div className="pt-2 border-t border-neutral-200 dark:border-white/10">
+            <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+              <Cloud className="h-3.5 w-3.5 text-purple-500" />
+              <span>{isFa ? 'توکن API Railway (اختیاری جهت ثبت یا بروزرسانی)' : 'Railway API Token (Optional)'}</span>
+            </label>
+            <input
+              type="password"
+              dir="ltr"
+              value={railwayApiToken}
+              onChange={(e) => {
+                setRailwayApiToken(e.target.value);
+                setUpdateRailway(true);
+              }}
+              placeholder="Railway Account Token..."
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs font-mono text-neutral-900 dark:text-neutral-100"
             />
           </div>
 

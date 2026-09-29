@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Server, Lock, User as UserIcon, ArrowRight, ShieldCheck, Eye, EyeOff, Sparkles, KeyRound } from 'lucide-react';
+import { Server, Lock, User as UserIcon, ArrowRight, ShieldCheck, Eye, EyeOff, Sparkles, KeyRound, Cloud } from 'lucide-react';
 import { Language, User } from '../types';
 import { translations } from '../locales/translations';
 
@@ -19,8 +19,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ lang, onLoginSuccess }) 
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [railwayApiToken, setRailwayApiToken] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showRailwayToken, setShowRailwayToken] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -60,14 +62,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({ lang, onLoginSuccess }) 
     setLoading(true);
 
     try {
+      const trimmedRailway = railwayApiToken.trim();
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password })
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          ...(trimmedRailway ? { railwayApiToken: trimmedRailway } : {})
+        })
       });
 
       const data = await res.json();
       if (res.ok && data.token && data.user) {
+        if (trimmedRailway) {
+          try {
+            sessionStorage.setItem('open_server_info_on_login', '1');
+          } catch {}
+        }
         onLoginSuccess(data.token, data.user);
       } else if (data.isFirstRun) {
         setIsFirstRun(true);
@@ -99,14 +111,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({ lang, onLoginSuccess }) 
 
     setLoading(true);
     try {
+      const trimmedRailway = railwayApiToken.trim();
       const res = await fetch('/api/auth/initial-setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: trimmedUsername, password })
+        body: JSON.stringify({
+          username: trimmedUsername,
+          password,
+          railwayApiToken: trimmedRailway
+        })
       });
 
       const data = await res.json();
       if (res.ok && data.token && data.user) {
+        if (trimmedRailway) {
+          try {
+            sessionStorage.setItem('open_server_info_on_login', '1');
+          } catch {}
+        }
         onLoginSuccess(data.token, data.user);
       } else {
         setError(data.error || (isFa ? 'خطا در راه‌اندازی اولیه و ثبت رمز عبور' : 'Error establishing administrator credentials'));
@@ -233,6 +255,41 @@ export const LoginModal: React.FC<LoginModalProps> = ({ lang, onLoginSuccess }) 
               </div>
             </div>
 
+            {/* Optional Railway API Token Field */}
+            <div className="pt-1 border-t border-neutral-200/70 dark:border-white/10">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                  <Cloud className="h-3.5 w-3.5 text-purple-500" />
+                  <span>{isFa ? 'توکن API Railway' : 'Railway API Token'}</span>
+                </label>
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-medium">
+                  {isFa ? 'اختیاری' : 'Optional'}
+                </span>
+              </div>
+              <div className="relative" dir="ltr">
+                <KeyRound className="h-4 w-4 text-neutral-400 absolute left-3.5 top-3" />
+                <input
+                  type={showRailwayToken ? 'text' : 'password'}
+                  value={railwayApiToken}
+                  onChange={(e) => setRailwayApiToken(e.target.value)}
+                  placeholder={isFa ? 'Account Token (e.g. a1b2c3d4-...)' : 'Railway Account Token (Optional)'}
+                  className="w-full pl-10 pr-10 py-2.5 rounded-2xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs font-mono text-neutral-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowRailwayToken(!showRailwayToken)}
+                  className="absolute right-3 top-2.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer p-0.5"
+                >
+                  {showRailwayToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="text-[10.5px] text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
+                {isFa
+                  ? 'در صورت وارد کردن توکن حساب Railway، اطلاعات اکانت، اعتبار باقی‌مانده و مصرف پروژه در بخش اطلاعات سرور نمایش داده می‌شود.'
+                  : 'If provided, Railway account credit, plan limits, and project usage will be shown in Server Info.'}
+              </p>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
@@ -305,6 +362,36 @@ export const LoginModal: React.FC<LoginModalProps> = ({ lang, onLoginSuccess }) 
                 className="absolute right-3 top-2.5 rtl:right-auto rtl:left-3 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer p-0.5"
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Optional Railway API Token Field on Login as well */}
+          <div className="pt-1 border-t border-neutral-200/70 dark:border-white/10">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                <Cloud className="h-3.5 w-3.5 text-purple-500" />
+                <span>{isFa ? 'توکن API Railway' : 'Railway API Token'}</span>
+              </label>
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-medium">
+                {isFa ? 'اختیاری' : 'Optional'}
+              </span>
+            </div>
+            <div className="relative" dir="ltr">
+              <KeyRound className="h-4 w-4 text-neutral-400 absolute left-3.5 top-3" />
+              <input
+                type={showRailwayToken ? 'text' : 'password'}
+                value={railwayApiToken}
+                onChange={(e) => setRailwayApiToken(e.target.value)}
+                placeholder={isFa ? 'Account Token (اختیاری جهت ثبت یا تغییر)' : 'Railway Account Token (Optional)'}
+                className="w-full pl-10 pr-10 py-2.5 rounded-2xl border border-neutral-300 dark:border-white/10 bg-neutral-50 dark:bg-white/5 text-xs font-mono text-neutral-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none transition"
+              />
+              <button
+                type="button"
+                onClick={() => setShowRailwayToken(!showRailwayToken)}
+                className="absolute right-3 top-2.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer p-0.5"
+              >
+                {showRailwayToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
           </div>

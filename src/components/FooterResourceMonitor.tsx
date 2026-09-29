@@ -13,9 +13,15 @@ import {
   Server,
   Zap,
   Info,
-  Layers
+  Layers,
+  Cloud,
+  Copy,
+  Check,
+  KeyRound,
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
-import { Language, SystemMetrics } from '../types';
+import { Language, SystemMetrics, RailwayInfo } from '../types';
 
 interface FooterResourceMonitorProps {
   token: string | null;
@@ -33,8 +39,34 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Railway state
+  const [railwayConfigured, setRailwayConfigured] = useState<boolean>(false);
+  const [railwayInfo, setRailwayInfo] = useState<RailwayInfo | null>(null);
+  const [railwayError, setRailwayError] = useState<string | null>(null);
+  const [railwayLoading, setRailwayLoading] = useState<boolean>(false);
+  const [copiedRailway, setCopiedRailway] = useState<boolean>(false);
+  const [showTokenEditor, setShowTokenEditor] = useState<boolean>(false);
+  const [tokenInput, setTokenInput] = useState<string>('');
+  const [savingToken, setSavingToken] = useState<boolean>(false);
+
   const popoverRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-open on login if Railway token was just provided, and listen for navbar trigger
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('open_server_info_on_login') === '1') {
+        sessionStorage.removeItem('open_server_info_on_login');
+        setIsOpen(true);
+      }
+    } catch {}
+
+    const handleToggleEvent = () => {
+      setIsOpen((prev) => !prev);
+    };
+    window.addEventListener('toggle-server-info', handleToggleEvent);
+    return () => window.removeEventListener('toggle-server-info', handleToggleEvent);
+  }, []);
 
   // Close popover when clicking outside
   useEffect(() => {
@@ -53,6 +85,33 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
+  // Fetch Railway info explicitly (with optional force refresh)
+  const fetchRailwayInfo = useCallback(
+    async (forceRefresh = false) => {
+      if (!token) return;
+      if (forceRefresh) setRailwayLoading(true);
+      try {
+        const res = await fetch(`/api/railway/info${forceRefresh ? '?refresh=1' : ''}`, {
+          headers: {
+            'x-auth-token': token,
+            'Accept': 'application/json'
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setRailwayConfigured(Boolean(data.configured));
+          setRailwayInfo(data.info || null);
+          setRailwayError(data.error || null);
+        }
+      } catch (err: any) {
+        setRailwayError(err.message || 'خطا در ارتباط با Railway');
+      } finally {
+        if (forceRefresh) setRailwayLoading(false);
+      }
+    },
+    [token]
+  );
+
   // Fetch live metrics from /api/metrics/live
   const fetchMetrics = useCallback(
     async (isManual = false) => {
@@ -60,7 +119,7 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
       if (isManual) setRefreshing(true);
 
       try {
-        const res = await fetch('/api/metrics/live', {
+        const res = await fetch(`/api/metrics/live${isManual ? '?refreshRailway=1' : ''}`, {
           headers: {
             'x-auth-token': token,
             'Accept': 'application/json'
@@ -74,6 +133,15 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
         const data = await res.json();
         if (data && data.current) {
           setMetrics(data.current);
+          if (typeof data.current.railwayConfigured === 'boolean') {
+            setRailwayConfigured(data.current.railwayConfigured);
+          }
+          if (data.current.railwayInfo !== undefined) {
+            setRailwayInfo(data.current.railwayInfo);
+          }
+          if (data.current.railwayError !== undefined) {
+            setRailwayError(data.current.railwayError);
+          }
           if (Array.isArray(data.history)) {
             setHistory(data.history);
           }
@@ -92,11 +160,72 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
     [token]
   );
 
+  // Save or remove Railway API token directly from Server Info
+  const handleSaveRailwayToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+    setSavingToken(true);
+    setRailwayError(null);
+    try {
+      const res = await fetch('/api/railway/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token
+        },
+        body: JSON.stringify({ railwayApiToken: tokenInput.trim() })
+      });
+      const data = await res.json();
+      setRailwayConfigured(Boolean(data.configured));
+      setRailwayInfo(data.info || null);
+      setRailwayError(data.error || null);
+      if (!data.error) {
+        setShowTokenEditor(false);
+        setTokenInput('');
+      }
+    } catch (err: any) {
+      setRailwayError(err.message || 'خطا در ذخیره توکن Railway');
+    } finally {
+      setSavingToken(false);
+    }
+  };
+
+  const handleRemoveRailwayToken = async () => {
+    if (!token) return;
+    setSavingToken(true);
+    try {
+      const res = await fetch('/api/railway/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': token
+        },
+        body: JSON.stringify({ railwayApiToken: '' })
+      });
+      const data = await res.json();
+      setRailwayConfigured(Boolean(data.configured));
+      setRailwayInfo(null);
+      setRailwayError(null);
+      setShowTokenEditor(false);
+      setTokenInput('');
+    } catch {} finally {
+      setSavingToken(false);
+    }
+  };
+
+  const handleCopyRailwayText = () => {
+    if (!railwayInfo?.formattedText) return;
+    navigator.clipboard.writeText(railwayInfo.formattedText);
+    setCopiedRailway(true);
+    setTimeout(() => setCopiedRailway(false), 2000);
+  };
+
   // Initial load
   useEffect(() => {
     setLoading(true);
     fetchMetrics(false);
-  }, [fetchMetrics]);
+    fetchRailwayInfo(false);
+  }, [fetchMetrics, fetchRailwayInfo]);
 
   // Polling interval with document visibility support
   useEffect(() => {
@@ -163,7 +292,7 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
           ref={triggerRef}
           onClick={() => setIsOpen((prev) => !prev)}
           className="group inline-flex items-center gap-1.5 sm:gap-2.5 px-2.5 sm:px-3 py-1 bg-white dark:bg-white/5 hover:bg-neutral-100 dark:hover:bg-white/10 border border-neutral-200/90 dark:border-white/10 rounded-full text-[10.5px] sm:text-xs font-medium text-neutral-700 dark:text-neutral-300 transition-all cursor-pointer shadow-xs max-w-fit select-none"
-          title={isFa ? 'کلیک برای مشاهده جزئیات پایش سرور' : 'Click to view server metrics details'}
+          title={isFa ? 'کلیک برای مشاهده اطلاعات سرور و جزئیات Railway' : 'Click to view server info & Railway details'}
           role="button"
           tabIndex={0}
         >
@@ -175,7 +304,7 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
 
           {/* Minimal Label */}
           <span className="font-semibold text-neutral-900 dark:text-neutral-100 text-[10px] sm:text-xs hidden sm:inline">
-            {isFa ? 'پایش سرور' : 'Server'}
+            {isFa ? 'اطلاعات سرور' : 'Server Info'}
           </span>
 
           <span className="text-neutral-300 dark:text-neutral-700 hidden sm:inline">|</span>
@@ -219,6 +348,25 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
             </span>
           </div>
 
+          {/* Railway Quick Pill Badge if configured */}
+          {railwayConfigured && (
+            <>
+              <span className="text-neutral-300 dark:text-neutral-700">|</span>
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/25 text-purple-600 dark:text-purple-300 text-[10px] font-mono font-semibold">
+                <Cloud className="h-2.5 w-2.5 text-purple-500 shrink-0" />
+                {railwayInfo ? (
+                  <span>
+                    {railwayInfo.account} ({railwayInfo.plan}) • LEFT: ${railwayInfo.left.toFixed(4)}
+                  </span>
+                ) : railwayError ? (
+                  <span className="text-rose-400">Railway Error</span>
+                ) : (
+                  <span>Railway...</span>
+                )}
+              </div>
+            </>
+          )}
+
           {/* Uptime on slightly larger screens */}
           {metrics && (
             <>
@@ -240,7 +388,7 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
         {isOpen && (
           <div
             ref={popoverRef}
-            className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-[94vw] sm:w-[490px] max-w-[520px] bg-white dark:bg-[#141417] border border-neutral-200 dark:border-white/10 rounded-2xl shadow-2xl p-3.5 sm:p-4 text-xs z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
+            className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-[95vw] sm:w-[550px] max-w-[580px] max-h-[82vh] overflow-y-auto bg-white dark:bg-[#141417] border border-neutral-200 dark:border-white/10 rounded-2xl shadow-2xl p-3.5 sm:p-4 text-xs z-50 animate-in fade-in slide-in-from-bottom-2 duration-150"
             dir={isFa ? 'rtl' : 'ltr'}
           >
             {/* Header */}
@@ -251,7 +399,7 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
                 </div>
                 <div>
                   <h4 className="font-semibold text-neutral-900 dark:text-white text-xs sm:text-sm">
-                    {isFa ? 'پایش زنده منابع سرور' : 'Server Resource Monitor'}
+                    {isFa ? 'اطلاعات سرور و پایش زنده منابع' : 'Server Information & Live Resource Monitor'}
                   </h4>
                   <p className="text-[10px] text-neutral-500 dark:text-neutral-400">
                     {metrics?.hostname || 'Host'} • {metrics?.platform || 'Linux'}
@@ -264,13 +412,30 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    fetchMetrics(true);
+                    setShowTokenEditor((prev) => !prev);
                   }}
-                  disabled={refreshing}
+                  className={`px-2 py-1 rounded-lg border text-[10px] font-semibold flex items-center gap-1 transition cursor-pointer ${
+                    railwayConfigured
+                      ? 'bg-purple-500/10 border-purple-500/25 text-purple-600 dark:text-purple-300 hover:bg-purple-500/20'
+                      : 'bg-neutral-100 dark:bg-white/5 border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-white/10'
+                  }`}
+                  title={isFa ? 'تنظیم یا ویرایش توکن API Railway' : 'Configure Railway API Token'}
+                >
+                  <KeyRound className="h-3 w-3" />
+                  <span>{isFa ? 'API Railway' : 'Railway API'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    fetchMetrics(true);
+                    fetchRailwayInfo(true);
+                  }}
+                  disabled={refreshing || railwayLoading}
                   className="p-1.5 text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-white rounded-lg hover:bg-neutral-100 dark:hover:bg-white/5 transition cursor-pointer"
                   title={isFa ? 'بروزرسانی دستی' : 'Refresh now'}
                 >
-                  <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
+                  <RefreshCw className={`h-3.5 w-3.5 ${(refreshing || railwayLoading) ? 'animate-spin text-blue-500' : ''}`} />
                 </button>
                 <button
                   type="button"
@@ -285,6 +450,144 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
                 </button>
               </div>
             </div>
+
+            {/* Inline Railway API Token Editor */}
+            {showTokenEditor && (
+              <form
+                onSubmit={handleSaveRailwayToken}
+                className="mb-3 p-3 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-300 flex items-center gap-1.5">
+                    <Cloud className="h-3.5 w-3.5" />
+                    <span>{isFa ? 'تنظیم توکن حساب Railway (Account Token)' : 'Configure Railway Account Token'}</span>
+                  </span>
+                  {railwayConfigured && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveRailwayToken}
+                      disabled={savingToken}
+                      className="text-[10px] text-rose-500 hover:text-rose-400 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      <span>{isFa ? 'حذف توکن' : 'Remove Token'}</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2" dir="ltr">
+                  <input
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="Railway Account Token..."
+                    className="flex-1 px-2.5 py-1.5 rounded-lg border border-neutral-300 dark:border-white/10 bg-white dark:bg-black/40 text-xs font-mono text-neutral-900 dark:text-white outline-none focus:ring-1 focus:ring-purple-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingToken || !tokenInput.trim()}
+                    className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold text-[11px] cursor-pointer transition shrink-0"
+                  >
+                    {savingToken ? (isFa ? 'در حال بررسی...' : 'Saving...') : (isFa ? 'ذخیره و استعلام' : 'Save')}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* RAILWAY SERVER & ACCOUNT INFO SECTION */}
+            {(railwayConfigured || railwayInfo || railwayError) && (
+              <div className="mb-3 p-3 rounded-xl bg-neutral-50 dark:bg-[#0d0d10] border border-purple-500/25 dark:border-purple-500/20 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Cloud className="h-3.5 w-3.5 text-purple-500" />
+                    <span className="font-bold text-neutral-900 dark:text-white text-xs">
+                      {isFa ? 'اطلاعات سرور و حساب Railway' : 'Railway Account & Server Usage'}
+                    </span>
+                    {railwayInfo && (
+                      <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30 font-mono text-[10px] font-bold">
+                        plan={railwayInfo.plan}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {railwayInfo && (
+                      <button
+                        type="button"
+                        onClick={handleCopyRailwayText}
+                        className="px-2 py-0.5 rounded bg-neutral-200/70 dark:bg-white/10 hover:bg-neutral-300 dark:hover:bg-white/15 text-neutral-700 dark:text-neutral-200 text-[10px] flex items-center gap-1 cursor-pointer transition"
+                        title={isFa ? 'کپی خروجی متنی' : 'Copy formatted output'}
+                      >
+                        {copiedRailway ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                        <span>{copiedRailway ? (isFa ? 'کپی شد' : 'Copied') : (isFa ? 'کپی' : 'Copy')}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {railwayError && !railwayInfo && (
+                  <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>{railwayError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => fetchRailwayInfo(true)}
+                      className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[10px] cursor-pointer shrink-0"
+                    >
+                      {isFa ? 'تلاش مجدد' : 'Retry'}
+                    </button>
+                  </div>
+                )}
+
+                {!railwayInfo && !railwayError && (
+                  <div className="py-3 text-center text-neutral-400 text-[11px] flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-purple-500"></div>
+                    <span>{isFa ? 'در حال دریافت اطلاعات از Railway API...' : 'Fetching Railway API data...'}</span>
+                  </div>
+                )}
+
+                {railwayInfo && (
+                  <>
+                    {/* Quick Visual Summary Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10.5px]" dir="ltr">
+                      <div className="p-2 rounded-lg bg-white dark:bg-white/5 border border-neutral-200/70 dark:border-white/5">
+                        <span className="text-[9.5px] text-neutral-400 block">ACCOUNT</span>
+                        <span className="font-mono font-bold text-neutral-900 dark:text-white truncate block">
+                          {railwayInfo.account}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-white dark:bg-white/5 border border-neutral-200/70 dark:border-white/5">
+                        <span className="text-[9.5px] text-neutral-400 block">LEFT CREDIT</span>
+                        <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          ${railwayInfo.left.toFixed(4)}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-white dark:bg-white/5 border border-neutral-200/70 dark:border-white/5">
+                        <span className="text-[9.5px] text-neutral-400 block">SPENT</span>
+                        <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                          ${railwayInfo.spent.toFixed(4)}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-white dark:bg-white/5 border border-neutral-200/70 dark:border-white/5">
+                        <span className="text-[9.5px] text-neutral-400 block">PERIOD LEFT</span>
+                        <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                          {railwayInfo.daysLeft} days left
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Exact Formatted Output Block matching the user's specification */}
+                    <pre
+                      dir="ltr"
+                      className="p-2.5 rounded-xl bg-neutral-900 dark:bg-black/80 border border-neutral-800 dark:border-white/10 text-emerald-400 font-mono text-[11px] leading-relaxed overflow-x-auto select-all whitespace-pre"
+                    >
+                      {railwayInfo.formattedText}
+                    </pre>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Container Resource Notice if applicable */}
             {metrics?.containerInfo && (

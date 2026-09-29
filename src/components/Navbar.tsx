@@ -106,11 +106,16 @@ export const Navbar: React.FC<NavbarProps> = ({
               {t.appSubTitle}
             </p>
           </div>
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20 mr-2">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('toggle-server-info'))}
+            className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-green-500/10 hover:bg-green-500/20 text-green-600 dark:text-green-400 border border-green-500/20 mr-2 cursor-pointer transition"
+            title={lang === 'fa' ? 'مشاهده اطلاعات سرور و وضعیت Railway' : 'View Server Info & Railway Status'}
+          >
             <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
             <Wifi className="h-3.5 w-3.5" />
             <span>{t.serverOnline}</span>
-          </div>
+          </button>
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">

@@ -344,6 +344,13 @@ async def build_system_metrics_display():
 
     now_str = datetime.now().strftime("%H:%M:%S")
 
+    railway_block = ""
+    if res and "current" in res and res["current"].get("railwayInfo"):
+        rw_info = res["current"]["railwayInfo"]
+        fmt_text = rw_info.get("formattedText", "")
+        if fmt_text:
+            railway_block = f"\n\n🚂 *اطلاعات حساب و مصرف Railway:*\n```\n{fmt_text}\n```"
+
     metrics_text = (
         "📊 *آخرین وضعیت سخت‌افزار و منابع سرور:*\n"
         f"⏱️ *زمان استعلام:* `{now_str}`\n\n"
@@ -358,6 +365,7 @@ async def build_system_metrics_display():
         f"└ 📥 *دریافت (Recv):* `{format_bytes_human(net_rx_bytes)}` \n\n"
         f"⏱️ *مدت زمان فعالیت (Uptime):*\n"
         f"└ `{format_uptime_human(uptime_sec)}`"
+        f"{railway_block}"
     )
 
     keyboard = [
