@@ -7426,6 +7426,36 @@ async function ensurePrerequisitesOnBoot() {
       fs.mkdirSync(downloadsDir, { recursive: true });
     }
 
+    // Auto-create database directory & SQLite database on deployment
+    try {
+      const dataDir = path.join(process.cwd(), 'data');
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      const pyDbInit = `
+import sqlite3, os
+db_dir = os.path.join(os.getcwd(), 'data')
+os.makedirs(db_dir, exist_ok=True)
+db_path = os.path.join(db_dir, 'database.sqlite')
+conn = sqlite3.connect(db_path)
+c = conn.cursor()
+c.execute('CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT)')
+c.execute('CREATE TABLE IF NOT EXISTS user_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, content TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
+c.execute('CREATE TABLE IF NOT EXISTS app_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
+c.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
+conn.commit()
+conn.close()
+`;
+      const oneLiner = pyDbInit.split('\n').filter(l => l.trim()).join('; ');
+      exec(`python3 -c "${oneLiner}"`, (dbErr) => {
+        if (!dbErr) {
+          console.log('[Database] Auto-initialized SQLite database at ./data/database.sqlite');
+        }
+      });
+    } catch (dbErr: any) {
+      console.warn('[Database] Auto-init notice:', dbErr.message);
+    }
+
     // Ensure Deno is installed and linked to /usr/local/bin/deno
     exec('deno --version', (denoErr) => {
       if (denoErr) {
