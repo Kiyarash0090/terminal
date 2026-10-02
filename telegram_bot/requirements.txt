@@ -10,3 +10,7 @@ aiohttp-socks
 yt-dlp
 bgutil-ytdlp-pot-provider
 pytubefix
+aiograpi
+instagrapi
+curl-cffi
+Pillow

@@ -17,39 +17,102 @@ from typing import Optional, List, Tuple, Dict
 logger = logging.getLogger(__name__)
 
 # ---- مسیرها ----
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).resolve().parent
 CONFIGS_DIR = BASE_DIR / "vpn_configs"
 ACTIVE_CONFIG_FILE = BASE_DIR / "vpn_active.json"
 
 def get_v2ray_bin() -> str:
-    """پیدا کردن یا دانلود خودکار xray در صورت عدم وجود"""
+    """پیدا کردن یا دانلود خودکار xray/v2ray در صورت عدم وجود"""
     import shutil
-    for path in ["xray", "v2ray", "/usr/local/bin/xray", "/usr/bin/xray", str(BASE_DIR / "bin" / "xray")]:
-        if shutil.which(path) or Path(path).exists():
-            return path
-    
-    # دانلود خودکار
+    candidates = [
+        "/usr/local/bin/xray",
+        "/usr/local/bin/v2ray",
+        "/usr/bin/xray",
+        "/usr/bin/v2ray",
+        str(BASE_DIR / "bin" / "xray"),
+        "xray",
+        "v2ray",
+    ]
+    for path in candidates:
+        found = shutil.which(path)
+        if found and os.access(found, os.X_OK):
+            try:
+                if not Path("/usr/local/bin/xray").exists():
+                    os.symlink(found, "/usr/local/bin/xray")
+                if not Path("/usr/local/bin/v2ray").exists():
+                    os.symlink(found, "/usr/local/bin/v2ray")
+            except Exception:
+                pass
+            return found
+        p = Path(path)
+        if p.is_file():
+            try:
+                if not os.access(p, os.X_OK):
+                    p.chmod(0o755)
+                resolved = str(p.resolve())
+                if not Path("/usr/local/bin/xray").exists():
+                    os.symlink(resolved, "/usr/local/bin/xray")
+                if not Path("/usr/local/bin/v2ray").exists():
+                    os.symlink(resolved, "/usr/local/bin/v2ray")
+                return resolved
+            except Exception:
+                return str(p.resolve())
+
+    # دانلود خودکار ایمن در برابر اجرای همزمان (Concurrency-safe)
     try:
         bin_dir = BASE_DIR / "bin"
-        bin_dir.mkdir(exist_ok=True)
+        bin_dir.mkdir(parents=True, exist_ok=True)
         xray_path = bin_dir / "xray"
-        if xray_path.exists():
-            return str(xray_path)
-            
+        if xray_path.is_file() and xray_path.stat().st_size > 1_000_000:
+            xray_path.chmod(0o755)
+            return str(xray_path.resolve())
+
         import urllib.request
         import zipfile
         logger.info("Downloading Xray-core automatically...")
-        zip_path = bin_dir / "xray.zip"
-        urllib.request.urlretrieve("https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip", zip_path)
+        tmp_extract_dir = bin_dir / f"tmp_{os.getpid()}_{int(time.time() * 1000)}"
+        tmp_extract_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = tmp_extract_dir / "xray.zip"
+
+        req = urllib.request.Request(
+            "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp, open(zip_path, "wb") as out_f:
+            shutil.copyfileobj(resp, out_f)
+
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(bin_dir)
-        if zip_path.exists():
-            zip_path.unlink()
+            zip_ref.extractall(tmp_extract_dir)
+
+        extracted_xray = tmp_extract_dir / "xray"
+        if extracted_xray.is_file():
+            extracted_xray.chmod(0o755)
+            shutil.move(str(extracted_xray), str(xray_path))
+        for dat_name in ("geoip.dat", "geosite.dat"):
+            dat_file = tmp_extract_dir / dat_name
+            if dat_file.is_file():
+                shutil.move(str(dat_file), str(bin_dir / dat_name))
+                try:
+                    shutil.copy2(str(bin_dir / dat_name), f"/usr/local/bin/{dat_name}")
+                except Exception:
+                    pass
+
+        shutil.rmtree(tmp_extract_dir, ignore_errors=True)
         xray_path.chmod(0o755)
-        return str(xray_path)
+        resolved_xray = str(xray_path.resolve())
+        for link_target in ("/usr/local/bin/xray", "/usr/local/bin/v2ray", "/usr/bin/xray", "/usr/bin/v2ray"):
+            try:
+                t = Path(link_target)
+                if not t.exists():
+                    os.symlink(resolved_xray, link_target)
+            except Exception:
+                pass
+        return resolved_xray
     except Exception as e:
         logger.error(f"Auto-download xray failed: {e}")
-        return "xray"
+        if (BASE_DIR / "bin" / "xray").is_file():
+            return str((BASE_DIR / "bin" / "xray").resolve())
+        return "/usr/local/bin/xray"
 
 # ---- مدل داده کانفیگ ----
 def _default_store() -> dict:
@@ -686,6 +749,9 @@ class VPNManager:
         if not configs:
             return []
 
+        # اطمینان از آماده بودن باینری xray/v2ray قبل از اجرای موازی
+        get_v2ray_bin()
+
         n = len(configs)
 
         # ---- مرحله ۱: پینگ موازی ----
@@ -824,7 +890,7 @@ class VPNManager:
                 f"💡 همه دستورات، yt-dlp و برنامه‌های پایتون به‌صورت مستقیم و بدون تداخل از VPN عبور می‌کنند."
             )
         except FileNotFoundError:
-            return False, f"❌ {V2RAY_BIN} نصب نیست."
+            return False, "❌ v2ray/xray نصب نیست."
         except Exception as e:
             return False, f"❌ خطا در اجرا: {e}"
 

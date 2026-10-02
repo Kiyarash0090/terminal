@@ -1,9 +1,9 @@
 import React from 'react';
-import { Terminal as TerminalIcon, FolderOpen, Cpu, Globe, Youtube } from 'lucide-react';
+import { Terminal as TerminalIcon, FolderOpen, Cpu, Globe, Youtube, Instagram } from 'lucide-react';
 import { Language } from '../types';
 import { translations } from '../locales/translations';
 
-export type ActiveTab = 'terminal' | 'fileManager' | 'processManager' | 'vpnManager' | 'youtube';
+export type ActiveTab = 'terminal' | 'fileManager' | 'processManager' | 'vpnManager' | 'youtube' | 'instagram';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -20,6 +20,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, lang }
     { id: 'processManager' as ActiveTab, label: t.processManager, icon: Cpu, color: 'text-purple-500' },
     { id: 'vpnManager' as ActiveTab, label: t.vpnManager, icon: Globe, color: 'text-indigo-500' },
     { id: 'youtube' as ActiveTab, label: (t as any).youtubeManager || (lang === 'fa' ? 'بخش یوتیوب' : 'YouTube Manager'), icon: Youtube, color: 'text-rose-500' },
+    { id: 'instagram' as ActiveTab, label: (t as any).instagramManager || (lang === 'fa' ? 'بخش اینستاگرام' : 'Instagram Manager'), icon: Instagram, color: 'text-pink-500' },
   ];
 
 

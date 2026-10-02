@@ -4,16 +4,53 @@ import { Navbar } from './components/Navbar';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { FooterResourceMonitor } from './components/FooterResourceMonitor';
 
-// Lazy load heavy components for better initial load
-const TerminalView = lazy(() => import('./components/TerminalView').then(m => ({ default: m.TerminalView })));
-const FileManager = lazy(() => import('./components/FileManager').then(m => ({ default: m.FileManager })));
-const ProcessManager = lazy(() => import('./components/ProcessManager').then(m => ({ default: m.ProcessManager })));
-const VpnManager = lazy(() => import('./components/VpnManager').then(m => ({ default: m.VpnManager })));
-const YouTubeManager = lazy(() => import('./components/YouTubeManager').then(m => ({ default: m.YouTubeManager })));
-const DocumentationModal = lazy(() => import('./components/DocumentationModal').then(m => ({ default: m.DocumentationModal })));
-const SecurityModal = lazy(() => import('./components/SecurityModal').then(m => ({ default: m.SecurityModal })));
-const LoginModal = lazy(() => import('./components/LoginModal').then(m => ({ default: m.LoginModal })));
-const TelegramBotModal = lazy(() => import('./components/TelegramBotModal').then(m => ({ default: m.TelegramBotModal })));
+// Resilient lazy load with auto-retry on dynamic chunk update
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T } | { [key: string]: any }>,
+  namedExport?: string
+) {
+  return lazy(async () => {
+    try {
+      const module = await factory();
+      if (namedExport && (module as any)[namedExport]) {
+        return { default: (module as any)[namedExport] };
+      }
+      if ('default' in module && module.default) {
+        return { default: module.default as T };
+      }
+      const firstExport = Object.values(module)[0] as T;
+      return { default: firstExport };
+    } catch (err) {
+      console.warn('Dynamic import failed, retrying once...', err);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      try {
+        const module = await factory();
+        if (namedExport && (module as any)[namedExport]) {
+          return { default: (module as any)[namedExport] };
+        }
+        if ('default' in module && module.default) {
+          return { default: module.default as T };
+        }
+        const firstExport = Object.values(module)[0] as T;
+        return { default: firstExport };
+      } catch (retryErr) {
+        console.error('Dynamic import failed after retry:', retryErr);
+        throw retryErr;
+      }
+    }
+  });
+}
+
+const TerminalView = lazyWithRetry(() => import('./components/TerminalView'), 'TerminalView');
+const FileManager = lazyWithRetry(() => import('./components/FileManager'), 'FileManager');
+const ProcessManager = lazyWithRetry(() => import('./components/ProcessManager'), 'ProcessManager');
+const VpnManager = lazyWithRetry(() => import('./components/VpnManager'), 'VpnManager');
+const YouTubeManager = lazyWithRetry(() => import('./components/YouTubeManager'), 'YouTubeManager');
+const InstagramManager = lazyWithRetry(() => import('./components/InstagramManager'), 'InstagramManager');
+const DocumentationModal = lazyWithRetry(() => import('./components/DocumentationModal'), 'DocumentationModal');
+const SecurityModal = lazyWithRetry(() => import('./components/SecurityModal'), 'SecurityModal');
+const LoginModal = lazyWithRetry(() => import('./components/LoginModal'), 'LoginModal');
+const TelegramBotModal = lazyWithRetry(() => import('./components/TelegramBotModal'), 'TelegramBotModal');
 
 export default function App() {
   const [lang, setLang] = useState<Language>(() => {
@@ -176,6 +213,9 @@ export default function App() {
           <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto">
             <div className={activeTab === 'youtube' ? '' : 'hidden'}>
               <YouTubeManager lang={lang} token={auth.token} />
+            </div>
+            <div className={activeTab === 'instagram' ? '' : 'hidden'}>
+              <InstagramManager lang={lang} token={auth.token} />
             </div>
             <div className={activeTab === 'terminal' ? '' : 'hidden'}>
               <TerminalView token={auth.token} lang={lang} />

@@ -2,7 +2,8 @@
 [phases.setup]
 nixPkgs = [
   "git",
-  "nodejs_20",
+  "nodejs_22",
+  "deno",
   "python3",
   "python3Packages.pip",
   "ffmpeg",
@@ -16,6 +17,7 @@ nixPkgs = [
 
 [phases.install]
 cmds = [
+  "curl -fsSL https://deno.land/install.sh | sh && ln -sf /root/.deno/bin/deno /usr/local/bin/deno || true",
   "git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil || (cd /opt/bgutil && git pull)",
   "cd /opt/bgutil/server && npm install && (npx tsc || true)",
   "pip install --break-system-packages /opt/bgutil/plugin || pip install /opt/bgutil/plugin || true",

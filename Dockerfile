@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:22-slim
 
 WORKDIR /app
 
@@ -31,6 +31,12 @@ RUN ARCH=$(dpkg --print-architecture) \
     && chmod +x /usr/local/bin/xray \
     && ln -sf /usr/local/bin/xray /usr/local/bin/v2ray \
     && rm -rf /tmp/xray /tmp/xray.zip
+
+# Install Deno
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="${DENO_INSTALL}/bin:${PATH}"
+RUN curl -fsSL https://deno.land/install.sh | sh \
+    && ln -sf /root/.deno/bin/deno /usr/local/bin/deno
 
 # Copy Node dependency definitions and install
 COPY package*.json ./

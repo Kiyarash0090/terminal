@@ -123,21 +123,46 @@ class FileManager:
             
             is_root = (
                 dir_resolved == base_resolved or
-                str(dir_resolved) in ['/app', '/app/applet']
+                str(dir_resolved) in ['/app', '/app/applet'] or
+                str(dir_resolved).endsWith('/applet') if hasattr(str(dir_resolved), 'endsWith') else str(dir_resolved).endswith('/applet')
             )
 
-            if is_root:
-                hidden_files = [
-                    'assets', 'dist', 'node_modules', 'public', 'src', 'telegram_bot', 
-                    'user_files', '.env.example', '.serverdash_config.json', '.terminal_cwd', 
-                    'get-pip.py', 'index.html', 'nixpacks.toml', 'proxychains.conf', 
-                    'railway.json', 'README.md', 'requirements.txt', 'server.ts.orig', 
-                    'telegram_bot.py', '.gitignore', 'bun.lock', 'metadata.json', 
-                    'package.json', 'server.ts', 'tsconfig.json', 'vite.config.ts', 'Dockerfile'
-                ]
-                entries = sorted([e for e in directory.iterdir() if e.name not in hidden_files], key=lambda x: (not x.is_dir(), x.name.lower()))
-            else:
-                entries = sorted([e for e in directory.iterdir() if e.name != '.git'], key=lambda x: (not x.is_dir(), x.name.lower()))
+            app_system_files = {
+                # Git and source control
+                '.git', '.gitignore',
+                # Env and keys
+                '.env', '.env.example',
+                # Node and builds
+                'node_modules', 'dist', 'bun.lock', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts',
+                # Frontend & app source code
+                'src', 'assets', 'public', 'index.html', 'metadata.json',
+                # Python backend & internal helper scripts
+                'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot',
+                'get-pip.py', 'requirements.txt', '__pycache__',
+                # Internal configs, servers, and sessions
+                'server.ts', 'server.ts.orig', 'Dockerfile', 'nixpacks.toml', 'railway.json', 'README.md', 'proxychains.conf',
+                'cookies.txt', 'instagram_accounts', 'instagram_page_info.json', 'instagram_session.json',
+                '.serverdash_config.json', '.serverdash_metrics.json', '.pot_config.json', '.terminal_cwd',
+                '.trash_map.json', '.aistudio', 'skills'
+            }
+
+            def is_system_file(entry):
+                name = entry.name
+                if name.startswith('.'):
+                    return True
+                if name == '__pycache__' or name.endswith('.pyc') or name.endswith('.pyo'):
+                    return True
+                if is_root:
+                    if name in app_system_files:
+                        return True
+                    if name.endswith('_helper.py'):
+                        return True
+                return False
+
+            entries = sorted(
+                [e for e in directory.iterdir() if not is_system_file(e)],
+                key=lambda x: (not x.is_dir(), x.name.lower())
+            )
             
             for entry in entries:
                 try:

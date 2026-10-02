@@ -1227,6 +1227,58 @@ function saveTerminalCwd(cwd: string) {
 const backgroundTasks: Map<string, { task: BackgroundTask; process?: ChildProcess }> = new Map();
 let activeTerminalCwd = loadTerminalCwd();
 const activeProcessesMap: Map<string, ChildProcess> = new Map();
+const customTerminalEnv: Record<string, string> = {};
+const IGNORED_ENV_KEYS = new Set([
+  '_', 'PWD', 'OLDPWD', 'SHLVL',
+  'ALL_PROXY', 'all_proxy', 'HTTP_PROXY', 'http_proxy',
+  'HTTPS_PROXY', 'https_proxy', 'SOCKS_PROXY', 'socks_proxy',
+  'SOCKS5_PROXY', 'socks5_proxy'
+]);
+
+function buildTrackedBashCommand(rawCommand: string, processId: string): {
+  script: string;
+  cwdFile: string;
+  envFile: string;
+} {
+  const normalized = String(rawCommand).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const cwdFile = path.join(os.tmpdir(), `.sd_cwd_${processId}`);
+  const envFile = path.join(os.tmpdir(), `.sd_env_${processId}`);
+  const script = `trap '__sd_ec=$?; pwd > "${cwdFile}" 2>/dev/null; env -0 > "${envFile}" 2>/dev/null; exit $__sd_ec' EXIT\n${normalized}`;
+  return { script, cwdFile, envFile };
+}
+
+function harvestTrackedBashState(cwdFile: string, envFile: string): string | null {
+  let newCwd: string | null = null;
+  try {
+    if (fs.existsSync(cwdFile)) {
+      const candidate = fs.readFileSync(cwdFile, 'utf-8').trim();
+      fs.unlinkSync(cwdFile);
+      if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        newCwd = candidate;
+        activeTerminalCwd = candidate;
+        saveTerminalCwd(activeTerminalCwd);
+      }
+    }
+  } catch {}
+  try {
+    if (fs.existsSync(envFile)) {
+      const rawEnv = fs.readFileSync(envFile, 'utf-8');
+      fs.unlinkSync(envFile);
+      const entries = rawEnv.split('\0');
+      for (const entry of entries) {
+        const eqIdx = entry.indexOf('=');
+        if (eqIdx > 0) {
+          const key = entry.slice(0, eqIdx);
+          const val = entry.slice(eqIdx + 1);
+          if (!IGNORED_ENV_KEYS.has(key) && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+            customTerminalEnv[key] = val;
+          }
+        }
+      }
+    }
+  } catch {}
+  return newCwd;
+}
 
 // CWD Sync Endpoints
 app.get('/api/terminal/cwd', (req: Request, res: Response) => {
@@ -1251,10 +1303,12 @@ app.post('/api/terminal/exec-stream', async (req: Request, res: Response) => {
   }
 
   const execCwd = cwd && fs.existsSync(cwd) ? cwd : activeTerminalCwd;
-  const trimmed = command.trim();
+  const normalizedCommand = String(command).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const trimmed = normalizedCommand.trim();
+  const isSingleSimpleCd = !/[\n;&|]/.test(trimmed) && (trimmed.startsWith('cd ') || trimmed === 'cd');
 
-  // Special handling for cd command
-  if (trimmed.startsWith('cd ') || trimmed === 'cd') {
+  // Special handling for single-line cd command
+  if (isSingleSimpleCd) {
     const targetDir = trimmed === 'cd' ? os.homedir() : trimmed.substring(3).trim();
     const resolvedPath = path.resolve(execCwd, targetDir);
 
@@ -1267,12 +1321,12 @@ app.post('/api/terminal/exec-stream', async (req: Request, res: Response) => {
       saveTerminalCwd(activeTerminalCwd);
       res.write(`data: ${JSON.stringify({ type: 'init', cwd: activeTerminalCwd })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'output', text: `Changed directory to: ${activeTerminalCwd}\n` })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: 0 })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: 0, cwd: activeTerminalCwd })}\n\n`);
       return res.end();
     } else {
       res.write(`data: ${JSON.stringify({ type: 'init', cwd: execCwd })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'output', text: `cd: no such file or directory: ${targetDir}\n` })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: 1 })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: 1, cwd: execCwd })}\n\n`);
       return res.end();
     }
   }
@@ -1287,17 +1341,18 @@ app.post('/api/terminal/exec-stream', async (req: Request, res: Response) => {
 
   const taskData: BackgroundTask = {
     id: processId,
-    name: `Terminal: ${trimmed.substring(0, 35)}`,
+    name: `Terminal: ${trimmed.replace(/\s+/g, ' ').substring(0, 35)}`,
     command: trimmed,
     cwd: execCwd,
     status: 'running',
     startedAt: new Date().toISOString(),
-    logs: [`[${new Date().toLocaleTimeString()}] Launched from Terminal in ${execCwd}: ${trimmed}\n`]
+    logs: [`[${new Date().toLocaleTimeString()}] Launched from Terminal in ${execCwd}:\n${trimmed}\n`]
   };
 
   try {
-    const wrapped = await getVpnWrappedCommand(command);
-    const child = spawn('bash', ['-c', wrapped.command], {
+    const wrapped = await getVpnWrappedCommand(normalizedCommand);
+    const tracked = buildTrackedBashCommand(wrapped.command, processId);
+    const child = spawn('bash', ['-c', tracked.script], {
       cwd: execCwd,
       env: wrapped.env
     });
@@ -1326,19 +1381,24 @@ app.post('/api/terminal/exec-stream', async (req: Request, res: Response) => {
 
     child.on('close', (code: number | null) => {
       activeProcessesMap.delete(processId);
+      const updatedCwd = harvestTrackedBashState(tracked.cwdFile, tracked.envFile);
+      if (updatedCwd) {
+        taskData.cwd = updatedCwd;
+      }
       taskData.status = code === 0 ? 'completed' : 'failed';
       taskData.exitCode = code;
       taskData.completedAt = new Date().toISOString();
       taskData.logs.push(`\n[Process exited with code ${code ?? 0}]\n`);
 
       if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: code ?? 0 })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: code ?? 0, cwd: updatedCwd || execCwd })}\n\n`);
         res.end();
       }
     });
 
     child.on('error', (err: Error) => {
       activeProcessesMap.delete(processId);
+      harvestTrackedBashState(tracked.cwdFile, tracked.envFile);
       taskData.status = 'failed';
       taskData.exitCode = 1;
       taskData.completedAt = new Date().toISOString();
@@ -1346,7 +1406,7 @@ app.post('/api/terminal/exec-stream', async (req: Request, res: Response) => {
 
       if (!res.writableEnded) {
         res.write(`data: ${JSON.stringify({ type: 'output', text: `Error: ${err.message}\n` })}\n\n`);
-        res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: 1 })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'exit', exitCode: 1, cwd: execCwd })}\n\n`);
         res.end();
       }
     });
@@ -1373,9 +1433,11 @@ app.post('/api/terminal/exec', async (req: Request, res: Response) => {
   }
 
   const execCwd = cwd && fs.existsSync(cwd) ? cwd : activeTerminalCwd;
-  const trimmed = command.trim();
+  const normalizedCommand = String(command).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const trimmed = normalizedCommand.trim();
+  const isSingleSimpleCd = !/[\n;&|]/.test(trimmed) && (trimmed.startsWith('cd ') || trimmed === 'cd');
 
-  if (trimmed.startsWith('cd ') || trimmed === 'cd') {
+  if (isSingleSimpleCd) {
     const targetDir = trimmed === 'cd' ? os.homedir() : trimmed.substring(3).trim();
     const resolvedPath = path.resolve(execCwd, targetDir);
 
@@ -1399,17 +1461,18 @@ app.post('/api/terminal/exec', async (req: Request, res: Response) => {
   const processId = 'term_' + Date.now();
   const taskData: BackgroundTask = {
     id: processId,
-    name: `Terminal: ${trimmed.substring(0, 35)}`,
+    name: `Terminal: ${trimmed.replace(/\s+/g, ' ').substring(0, 35)}`,
     command: trimmed,
     cwd: execCwd,
     status: 'running',
     startedAt: new Date().toISOString(),
-    logs: [`[${new Date().toLocaleTimeString()}] Executed: ${trimmed}\n`]
+    logs: [`[${new Date().toLocaleTimeString()}] Executed:\n${trimmed}\n`]
   };
 
   try {
-    const wrapped = await getVpnWrappedCommand(command);
-    const child = spawn('bash', ['-c', wrapped.command], {
+    const wrapped = await getVpnWrappedCommand(normalizedCommand);
+    const tracked = buildTrackedBashCommand(wrapped.command, processId);
+    const child = spawn('bash', ['-c', tracked.script], {
       cwd: execCwd,
       env: wrapped.env
     });
@@ -1438,6 +1501,10 @@ app.post('/api/terminal/exec', async (req: Request, res: Response) => {
 
     child.on('close', (code: number | null) => {
       activeProcessesMap.delete(processId);
+      const updatedCwd = harvestTrackedBashState(tracked.cwdFile, tracked.envFile);
+      if (updatedCwd) {
+        taskData.cwd = updatedCwd;
+      }
       taskData.status = code === 0 ? 'completed' : 'failed';
       taskData.exitCode = code;
       taskData.completedAt = new Date().toISOString();
@@ -1450,7 +1517,7 @@ app.post('/api/terminal/exec', async (req: Request, res: Response) => {
         hasResponded = true;
         res.json({
           output: outputStr || (code === 0 ? 'Command executed with no output' : `Exit code ${code}`),
-          cwd: execCwd,
+          cwd: updatedCwd || execCwd,
           exitCode: code ?? 1,
           processId,
           status: taskData.status,
@@ -1461,6 +1528,7 @@ app.post('/api/terminal/exec', async (req: Request, res: Response) => {
 
     child.on('error', (err: any) => {
       activeProcessesMap.delete(processId);
+      harvestTrackedBashState(tracked.cwdFile, tracked.envFile);
       taskData.status = 'failed';
       taskData.completedAt = new Date().toISOString();
       taskData.logs.push(`Launch error: ${err.message}\n`);
@@ -1631,20 +1699,44 @@ app.get('/api/files/list', async (req: Request, res: Response) => {
       normalizedResolved === '/app/applet'
     );
 
+    const showSystem = req.query.showSystem === 'true' || req.query.showHidden === 'true';
+
     let filteredFiles = files;
-    if (isRootAppDir) {
-      const systemFiles = [
-        '.git', 'node_modules', '.env', 'package.json', 'package-lock.json', 
-        'server.ts', 'vite.config.ts', 'metadata.json', '.gitignore', 
-        'tsconfig.json', 'dist', 'bun.lock', 'assets', 'public', 'src', 
-        'telegram_bot', 'user_files', '.env.example', '.serverdash_config.json', 
-        '.terminal_cwd', 'get-pip.py', 'index.html', 'nixpacks.toml', 
-        'proxychains.conf', 'railway.json', 'README.md', 'requirements.txt', 
-        'server.ts.orig', 'telegram_bot.py', 'Dockerfile'
-      ];
-      filteredFiles = files.filter(f => !systemFiles.includes(f));
-    } else {
-      filteredFiles = files.filter(f => f !== '.git');
+    if (!showSystem) {
+      if (isRootAppDir) {
+        const appSystemFiles = new Set([
+          // Git and source control
+          '.git', '.gitignore',
+          // Env and keys
+          '.env', '.env.example',
+          // Node and builds
+          'node_modules', 'dist', 'bun.lock', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts',
+          // Frontend & app source code
+          'src', 'assets', 'public', 'index.html', 'metadata.json',
+          // Python backend & internal helper scripts
+          'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot',
+          'get-pip.py', 'requirements.txt', '__pycache__',
+          // Internal configs, servers, and sessions
+          'server.ts', 'server.ts.orig', 'Dockerfile', 'nixpacks.toml', 'railway.json', 'README.md', 'proxychains.conf',
+          'cookies.txt', 'instagram_accounts', 'instagram_page_info.json', 'instagram_session.json',
+          '.serverdash_config.json', '.serverdash_metrics.json', '.pot_config.json', '.terminal_cwd',
+          '.trash_map.json', '.aistudio', 'skills'
+        ]);
+
+        filteredFiles = files.filter(f => {
+          if (f.startsWith('.')) return false;
+          if (f === '__pycache__' || f.endsWith('.pyc') || f.endsWith('.pyo')) return false;
+          if (appSystemFiles.has(f)) return false;
+          if (f.endsWith('_helper.py')) return false;
+          return true;
+        });
+      } else {
+        filteredFiles = files.filter(f => {
+          if (f.startsWith('.')) return false;
+          if (f === '__pycache__' || f.endsWith('.pyc') || f.endsWith('.pyo')) return false;
+          return true;
+        });
+      }
     }
     const items = await Promise.all(
       filteredFiles.map(async (name) => {
@@ -4483,10 +4575,15 @@ async function runVpnCli(cmd: string, args: string[] = []): Promise<any> {
 }
 
 async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Promise<{ command: string; env: Record<string, string> }> {
+  const homeDir = os.homedir() || '/root';
+  const denoBinDir = path.join(homeDir, '.deno', 'bin');
+  const basePath = customTerminalEnv.PATH || process.env.PATH || '';
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
+    ...customTerminalEnv,
     PYTHONUNBUFFERED: '1',
-    PATH: (process.env.PATH || '') + ':/usr/local/bin:/usr/bin:/bin'
+    DENO_INSTALL: customTerminalEnv.DENO_INSTALL || path.join(homeDir, '.deno'),
+    PATH: `${denoBinDir}:/root/.deno/bin:${basePath}:/usr/local/bin:/usr/bin:/bin`
   };
 
   if (!useVpn) {
@@ -5196,6 +5293,15 @@ interface YouTubeQualityOption {
   itag?: number;
 }
 
+interface YouTubeSubtitleOption {
+  id: string;
+  lang: string;
+  name: string;
+  isAuto: boolean;
+  formats: string[];
+  url?: string;
+}
+
 interface YouTubeVideoDetails {
   id: string;
   title: string;
@@ -5213,6 +5319,7 @@ interface YouTubeVideoDetails {
   vpnUsed?: boolean;
   vpnProxy?: string;
   qualities: YouTubeQualityOption[];
+  subtitles?: YouTubeSubtitleOption[];
 }
 
 interface YouTubeDownloadJob {
@@ -5221,7 +5328,7 @@ interface YouTubeDownloadJob {
   url: string;
   qualityId: string;
   formatLabel: string;
-  type: 'video' | 'audio';
+  type: 'video' | 'audio' | 'subtitle';
   engine?: 'ytdlp' | 'pytubefix';
   vpnUsed?: boolean;
   vpnProxy?: string;
@@ -5235,6 +5342,255 @@ interface YouTubeDownloadJob {
   error?: string;
   createdAt: number;
   completedAt?: number;
+}
+
+const SUBTITLE_LANG_NAMES: Record<string, string> = {
+  'fa': 'فارسی (Persian)',
+  'fa-IR': 'فارسی - ایران (Persian)',
+  'en': 'انگلیسی (English)',
+  'en-orig': 'انگلیسی اصلی (English Original)',
+  'en-US': 'انگلیسی آمریکا (English US)',
+  'en-GB': 'انگلیسی بریتانیا (English UK)',
+  'ar': 'عربی (Arabic)',
+  'tr': 'ترکی استانبولی (Turkish)',
+  'ku': 'کردی (Kurdish)',
+  'az': 'آذربایجانی (Azerbaijani)',
+  'de': 'آلمانی (German)',
+  'fr': 'فرانسوی (French)',
+  'es': 'اسپانیایی (Spanish)',
+  'ru': 'روسی (Russian)',
+  'it': 'ایتالیایی (Italian)',
+  'pt': 'پرتغالی (Portuguese)',
+  'zh': 'چینی (Chinese)',
+  'zh-Hans': 'چینی ساده‌شده (Chinese Simplified)',
+  'zh-Hant': 'چینی سنتی (Chinese Traditional)',
+  'ja': 'ژاپنی (Japanese)',
+  'ko': 'کره‌ای (Korean)',
+  'hi': 'هندی (Hindi)',
+  'ur': 'اردو (Urdu)',
+  'nl': 'هلندی (Dutch)',
+  'sv': 'سوئدی (Swedish)',
+  'pl': 'لهستانی (Polish)',
+  'uk': 'اوکراینی (Ukrainian)',
+  'id': 'اندونزیایی (Indonesian)',
+  'vi': 'ویتنامی (Vietnamese)',
+  'th': 'تایلندی (Thai)',
+  'he': 'عبری (Hebrew)',
+  'el': 'یونانی (Greek)',
+  'ps': 'پشتو (Pashto)',
+  'tg': 'تاجیکی (Tajik)',
+  'uz': 'ازبکی (Uzbek)',
+  'hy': 'ارمنی (Armenian)',
+  'ka': 'گرجی (Georgian)'
+};
+
+function getSubtitleLangLabel(langCode: string, fallbackName?: string): string {
+  const clean = (langCode || '').trim();
+  if (SUBTITLE_LANG_NAMES[clean]) return SUBTITLE_LANG_NAMES[clean];
+  const base = clean.split('-')[0];
+  if (SUBTITLE_LANG_NAMES[base] && !fallbackName) return `${SUBTITLE_LANG_NAMES[base]} (${clean})`;
+  if (fallbackName && fallbackName !== clean) {
+    if (SUBTITLE_LANG_NAMES[base] && !fallbackName.includes('فارسی') && !fallbackName.includes(SUBTITLE_LANG_NAMES[base].split(' ')[0])) {
+      return `${SUBTITLE_LANG_NAMES[base].split(' (')[0]} - ${fallbackName}`;
+    }
+    return fallbackName;
+  }
+  return SUBTITLE_LANG_NAMES[base] || clean.toUpperCase();
+}
+
+function sortSubtitlesList(subs: YouTubeSubtitleOption[]): YouTubeSubtitleOption[] {
+  const priorityLangs = ['fa', 'fa-IR', 'en', 'en-orig', 'en-US', 'en-GB', 'ar', 'tr', 'ku', 'az', 'de', 'fr', 'es', 'ru'];
+  return [...subs].sort((a, b) => {
+    // Prioritize Persian first regardless, then manual vs auto, then priority list
+    const aIsFa = a.lang === 'fa' || a.lang.startsWith('fa-');
+    const bIsFa = b.lang === 'fa' || b.lang.startsWith('fa-');
+    if (aIsFa && !bIsFa && a.isAuto === b.isAuto) return -1;
+    if (!aIsFa && bIsFa && a.isAuto === b.isAuto) return 1;
+
+    if (a.isAuto !== b.isAuto) {
+      return a.isAuto ? 1 : -1; // Manual first
+    }
+
+    const aIdx = priorityLangs.indexOf(a.lang);
+    const bIdx = priorityLangs.indexOf(b.lang);
+    if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+    if (aIdx !== -1) return -1;
+    if (bIdx !== -1) return 1;
+    return a.lang.localeCompare(b.lang);
+  });
+}
+
+function convertSubtitleContent(rawContent: string, targetExt: 'srt' | 'vtt' | 'txt'): string {
+  const text = (rawContent || '').trim();
+  if (!text) return '';
+
+  const formatSrtTime = (secFloat: number) => {
+    const totalMs = Math.max(0, Math.round(secFloat * 1000));
+    const hrs = Math.floor(totalMs / 3600000);
+    const mins = Math.floor((totalMs % 3600000) / 60000);
+    const secs = Math.floor((totalMs % 60000) / 1000);
+    const ms = totalMs % 1000;
+    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+  };
+
+  const formatVttTime = (secFloat: number) => formatSrtTime(secFloat).replace(',', '.');
+
+  const decodeHtmlEntities = (str: string) =>
+    str
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)));
+
+  // 1. JSON3 format
+  if (text.startsWith('{') && text.includes('"events"')) {
+    try {
+      const parsed = JSON.parse(text);
+      const events = Array.isArray(parsed.events) ? parsed.events : [];
+      const cues: { start: number; end: number; content: string }[] = [];
+      for (const ev of events) {
+        if (!ev.segs || !Array.isArray(ev.segs)) continue;
+        const line = ev.segs.map((s: any) => s.utf8 || '').join('').trim();
+        if (!line) continue;
+        const startSec = (ev.tStartMs || 0) / 1000;
+        const durSec = (ev.dDurationMs || 3000) / 1000;
+        cues.push({ start: startSec, end: startSec + durSec, content: line });
+      }
+      if (cues.length > 0) {
+        if (targetExt === 'txt') {
+          const deduped: string[] = [];
+          for (const c of cues) {
+            if (deduped[deduped.length - 1] !== c.content) deduped.push(c.content);
+          }
+          return deduped.join('\n');
+        }
+        if (targetExt === 'vtt') {
+          return 'WEBVTT\n\n' + cues.map((c, i) => `${i + 1}\n${formatVttTime(c.start)} --> ${formatVttTime(c.end)}\n${c.content}`).join('\n\n');
+        }
+        return cues.map((c, i) => `${i + 1}\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\n${c.content}`).join('\n\n');
+      }
+    } catch {}
+  }
+
+  // 2. WEBVTT format
+  if (text.startsWith('WEBVTT')) {
+    if (targetExt === 'vtt') return text;
+    const blocks = text.split(/\r?\n\r?\n/);
+    const srtBlocks: string[] = [];
+    const txtLines: string[] = [];
+    let idx = 1;
+
+    for (const b of blocks) {
+      const lines = b.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length === 0 || lines[0].startsWith('WEBVTT') || lines[0].startsWith('Kind:') || lines[0].startsWith('Language:') || lines[0].startsWith('NOTE')) {
+        continue;
+      }
+      const timeIdx = lines.findIndex(l => l.includes('-->'));
+      if (timeIdx === -1) continue;
+
+      const rawTimeLine = lines[timeIdx];
+      const arrowParts = rawTimeLine.split('-->');
+      if (arrowParts.length < 2) continue;
+
+      const normTime = (tStr: string) => {
+        const cleanT = tStr.trim().split(/\s+/)[0].replace('.', ',');
+        // If MM:SS,mmm instead of HH:MM:SS,mmm
+        if (/^\d{2}:\d{2},\d{3}$/.test(cleanT)) {
+          return `00:${cleanT}`;
+        }
+        return cleanT;
+      };
+
+      const startT = normTime(arrowParts[0]);
+      const endT = normTime(arrowParts[1]);
+      const contentLines = lines
+        .slice(timeIdx + 1)
+        .map(l => decodeHtmlEntities(l.replace(/<[^>]+>/g, '')).trim())
+        .filter(Boolean);
+
+      const contentStr = contentLines.join('\n');
+      if (contentStr) {
+        srtBlocks.push(`${idx}\n${startT} --> ${endT}\n${contentStr}`);
+        for (const cl of contentLines) {
+          if (txtLines[txtLines.length - 1] !== cl) {
+            txtLines.push(cl);
+          }
+        }
+        idx++;
+      }
+    }
+
+    if (targetExt === 'txt') return txtLines.join('\n');
+    return srtBlocks.join('\n\n');
+  }
+
+  // 3. XML timedtext (<text start="..." dur="..."> or <p t="..." d="...">)
+  if (text.startsWith('<')) {
+    const cues: { start: number; end: number; content: string }[] = [];
+    const textRegex = /<(?:text|p)\b([^>]*)>([\s\S]*?)<\/(?:text|p)>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = textRegex.exec(text)) !== null) {
+      const attrs = match[1] || '';
+      const inner = match[2] || '';
+      let startSec = 0;
+      let durSec = 3;
+
+      const startMatch = attrs.match(/\bstart=["']([\d.]+)["']/i);
+      const durMatch = attrs.match(/\bdur=["']([\d.]+)["']/i);
+      const tMatch = attrs.match(/\bt=["'](\d+)["']/i);
+      const dMatch = attrs.match(/\bd=["'](\d+)["']/i);
+
+      if (startMatch) {
+        startSec = parseFloat(startMatch[1]) || 0;
+        durSec = durMatch ? (parseFloat(durMatch[1]) || 3) : 3;
+      } else if (tMatch) {
+        startSec = (parseInt(tMatch[1], 10) || 0) / 1000;
+        durSec = dMatch ? ((parseInt(dMatch[1], 10) || 3000) / 1000) : 3;
+      }
+
+      const cleaned = decodeHtmlEntities(inner.replace(/<[^>]+>/g, '')).trim();
+      if (cleaned) {
+        cues.push({ start: startSec, end: startSec + durSec, content: cleaned });
+      }
+    }
+
+    if (cues.length > 0) {
+      if (targetExt === 'txt') {
+        const deduped: string[] = [];
+        for (const c of cues) {
+          if (deduped[deduped.length - 1] !== c.content) deduped.push(c.content);
+        }
+        return deduped.join('\n');
+      }
+      if (targetExt === 'vtt') {
+        return 'WEBVTT\n\n' + cues.map((c, i) => `${i + 1}\n${formatVttTime(c.start)} --> ${formatVttTime(c.end)}\n${c.content}`).join('\n\n');
+      }
+      return cues.map((c, i) => `${i + 1}\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\n${c.content}`).join('\n\n');
+    }
+  }
+
+  // 4. Already SRT
+  if (targetExt === 'txt') {
+    const lines = text.split(/\r?\n/);
+    const txtLines: string[] = [];
+    for (const l of lines) {
+      const trimmed = l.trim();
+      if (!trimmed || /^\d+$/.test(trimmed) || trimmed.includes('-->')) continue;
+      const cleaned = decodeHtmlEntities(trimmed.replace(/<[^>]+>/g, '')).trim();
+      if (cleaned && txtLines[txtLines.length - 1] !== cleaned) {
+        txtLines.push(cleaned);
+      }
+    }
+    return txtLines.join('\n');
+  }
+  if (targetExt === 'vtt' && !text.startsWith('WEBVTT')) {
+    return 'WEBVTT\n\n' + text.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  }
+
+  return text;
 }
 
 const youtubeDownloadJobs = new Map<string, YouTubeDownloadJob>();
@@ -5289,7 +5645,10 @@ function formatBytesHuman(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   }
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  if (bytes >= 1024 * 1024) {
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  return Math.max(1, Math.round(bytes / 1024)) + ' KB';
 }
 
 // GET /api/youtube/vpn-status - Get current VPN status and proxy for YouTube module
@@ -5389,6 +5748,16 @@ async function getPytubefixVideoDetails(trimmedUrl: string, poPort: string, vpn:
   details.engine = 'pytubefix';
   details.vpnUsed = vpn.isRunning;
   details.vpnProxy = vpn.isRunning ? vpn.httpProxy : undefined;
+  if (Array.isArray(details.subtitles)) {
+    details.subtitles = sortSubtitlesList(
+      details.subtitles.map((s: any) => ({
+        ...s,
+        name: getSubtitleLangLabel(s.lang, s.name)
+      }))
+    );
+  } else {
+    details.subtitles = [];
+  }
   return details;
 }
 
@@ -5531,6 +5900,73 @@ async function getYtDlpVideoDetails(trimmedUrl: string, poPort: string, vpn: any
     }
   );
 
+  // Extract Subtitles (manual + automatic_captions)
+  const rawSubtitles: YouTubeSubtitleOption[] = [];
+  const origVideoLang = typeof data.language === 'string' ? data.language.trim() : '';
+  const origBaseLang = origVideoLang.split('-')[0].toLowerCase();
+
+  const pickTrackUrl = (tracks: any[]): { url?: string; name?: string } => {
+    if (!Array.isArray(tracks) || tracks.length === 0) return {};
+    const validTracks = tracks.filter(t => t && typeof t.url === 'string' && t.url.startsWith('http'));
+    if (validTracks.length === 0) return {};
+
+    // Filter out AI-dubbed secondary tracks (variant=timing-optimized) because YouTube TimedText API
+    // returns HTTP 400 when translating them via tlang= (e.g. tlang=fa)
+    const nonVariantTracks = validTracks.filter(t => !t.url.includes('variant=timing-optimized') && !t.url.includes('variant='));
+    let pool = nonVariantTracks.length > 0 ? nonVariantTracks : validTracks;
+
+    // Further prefer tracks whose source lang= matches the video's original language or 'en'
+    if (pool.length > 1) {
+      const origLangTracks = pool.filter(t => {
+        if (origVideoLang && (t.url.includes(`lang=${origVideoLang}&`) || t.url.includes(`lang=${origBaseLang}&`))) {
+          return true;
+        }
+        return t.url.includes('lang=en&') || t.url.includes('lang=en-US&') || t.url.includes('lang=en-GB&');
+      });
+      if (origLangTracks.length > 0) {
+        pool = origLangTracks;
+      }
+    }
+
+    const vttTrack = pool.find(t => t.ext === 'vtt');
+    const srtTrack = pool.find(t => t.ext === 'srt');
+    const srvTrack = pool.find(t => t.ext === 'srv3' || t.ext === 'srv1' || t.ext === 'ttml');
+    const chosen = vttTrack || srtTrack || srvTrack || pool[0];
+    return { url: chosen?.url, name: chosen?.name };
+  };
+
+  if (data.subtitles && typeof data.subtitles === 'object') {
+    for (const [langCode, tracks] of Object.entries(data.subtitles)) {
+      if (langCode === 'live_chat') continue;
+      const { url: trackUrl, name: trackName } = pickTrackUrl(tracks as any[]);
+      rawSubtitles.push({
+        id: `sub_manual_${langCode}`,
+        lang: langCode,
+        name: getSubtitleLangLabel(langCode, trackName),
+        isAuto: false,
+        formats: ['srt', 'vtt', 'txt'],
+        url: trackUrl
+      });
+    }
+  }
+
+  if (data.automatic_captions && typeof data.automatic_captions === 'object') {
+    for (const [langCode, tracks] of Object.entries(data.automatic_captions)) {
+      if (langCode === 'live_chat') continue;
+      const { url: trackUrl, name: trackName } = pickTrackUrl(tracks as any[]);
+      rawSubtitles.push({
+        id: `sub_auto_${langCode}`,
+        lang: langCode,
+        name: getSubtitleLangLabel(langCode, trackName),
+        isAuto: true,
+        formats: ['srt', 'vtt', 'txt'],
+        url: trackUrl
+      });
+    }
+  }
+
+  const subtitles = sortSubtitlesList(rawSubtitles);
+
   return {
     id: data.id || '',
     title: data.title || 'YouTube Video',
@@ -5547,9 +5983,350 @@ async function getYtDlpVideoDetails(trimmedUrl: string, poPort: string, vpn: any
     engine: 'ytdlp',
     vpnUsed: vpn.isRunning,
     vpnProxy: vpn.isRunning ? vpn.httpProxy : undefined,
-    qualities
+    qualities,
+    subtitles
   };
 }
+
+// POST /api/youtube/subtitle/download - Download & convert a specific subtitle track (SRT / VTT / TXT)
+app.post('/api/youtube/subtitle/download', async (req: Request, res: Response) => {
+  try {
+    const {
+      url,
+      lang = 'en',
+      isAuto = false,
+      format = 'srt',
+      subtitleUrl = '',
+      subtitleName = '',
+      title = 'YouTube_Video',
+      videoId = 'video',
+      engine = 'ytdlp'
+    } = req.body || {};
+
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'آدرس ویدیو نامعتبر است' });
+    }
+
+    const targetExt: 'srt' | 'vtt' | 'txt' =
+      format === 'vtt' ? 'vtt' : format === 'txt' ? 'txt' : 'srt';
+
+    const vpn = await getVpnProxyConfig();
+    const poPort = poTokenState.isRunning ? String(poTokenState.port) : '';
+    const vpnEnv = vpn.isRunning ? {
+      HTTP_PROXY: vpn.httpProxy,
+      HTTPS_PROXY: vpn.httpProxy,
+      ALL_PROXY: vpn.socksProxy,
+      http_proxy: vpn.httpProxy,
+      https_proxy: vpn.httpProxy,
+      all_proxy: vpn.socksProxy
+    } : {};
+
+    const sanitizedTitle = (title || 'video').replace(/[^\w\s\u0600-\u06FF.-]/g, '_').substring(0, 60);
+    const cleanVid = (videoId || 'sub').replace(/[^\w-]/g, '');
+    const cleanLang = (lang || 'en').replace(/[^\w-]/g, '');
+    const finalFileName = `${sanitizedTitle}-${cleanVid}.${cleanLang}.${targetExt}`;
+    const finalFilePath = path.join(YOUTUBE_DOWNLOADS_DIR, finalFileName);
+
+    const isValidSubtitlePayload = (raw: string): boolean => {
+      if (!raw || typeof raw !== 'string') return false;
+      const trimmed = raw.trim();
+      if (trimmed.length < 10) return false;
+      const lower = trimmed.slice(0, 400).toLowerCase();
+      if (lower.includes('<!doctype html') || lower.includes('<html') || lower.includes('google help')) {
+        return false;
+      }
+      return (
+        trimmed.startsWith('WEBVTT') ||
+        trimmed.includes('-->') ||
+        trimmed.includes('<text') ||
+        trimmed.includes('<p ') ||
+        trimmed.includes('<transcript') ||
+        trimmed.includes('<timedtext') ||
+        (trimmed.startsWith('{') && trimmed.includes('"events"'))
+      );
+    };
+
+    const fetchViaCurl = async (targetUrl: string): Promise<string> => {
+      try {
+        const curlArgs = ['-sSL', '--max-time', '20', '-A', 'Mozilla/5.0'];
+        if (vpn.isRunning) {
+          curlArgs.push('-x', vpn.httpProxy);
+        }
+        curlArgs.push(targetUrl);
+        const { stdout } = await execFileAsync('curl', curlArgs, {
+          maxBuffer: 20 * 1024 * 1024,
+          env: { ...process.env, ...vpnEnv }
+        });
+        return stdout || '';
+      } catch {
+        return '';
+      }
+    };
+
+    let rawSubContent = '';
+
+    // Method 1: Direct fetch via extracted timedtext URL (fastest)
+    if (subtitleUrl && typeof subtitleUrl === 'string' && subtitleUrl.startsWith('http')) {
+      let baseFetchUrl = subtitleUrl;
+      if (baseFetchUrl.includes('fmt=json3') || baseFetchUrl.includes('fmt=srv')) {
+        baseFetchUrl = baseFetchUrl.replace(/fmt=[^&]+/, 'fmt=vtt');
+      } else if (!baseFetchUrl.includes('fmt=')) {
+        baseFetchUrl += (baseFetchUrl.includes('?') ? '&' : '?') + 'fmt=vtt';
+      }
+
+      const candidateUrls: string[] = [];
+      // If the URL has variant=timing-optimized (which fails with HTTP 400 on tlang=fa),
+      // prioritize repaired non-variant URLs first
+      if (baseFetchUrl.includes('variant=')) {
+        const strippedVariant = baseFetchUrl.replace(/&variant=[^&]+/g, '');
+        const enSourceVariant = strippedVariant.replace(/([?&])lang=[^&]+/, '$1lang=en');
+        if (!candidateUrls.includes(enSourceVariant)) candidateUrls.push(enSourceVariant);
+        if (!candidateUrls.includes(strippedVariant)) candidateUrls.push(strippedVariant);
+      }
+      if (!candidateUrls.includes(baseFetchUrl)) {
+        candidateUrls.push(baseFetchUrl);
+      }
+
+      for (const candidate of candidateUrls) {
+        const out = await fetchViaCurl(candidate);
+        if (isValidSubtitlePayload(out)) {
+          rawSubContent = out;
+          break;
+        }
+      }
+
+      // Method 1B: If YouTube rate-limited tlang= with HTTP 429, fetch the original untranslated srv1 track
+      // (which YouTube serves from static cache without 429) and batch-translate cues in parallel
+      if (!rawSubContent && (baseFetchUrl.includes('tlang=') || isAuto)) {
+        try {
+          const noTlang = baseFetchUrl
+            .replace(/([?&])tlang=[^&]+&?/g, '$1')
+            .replace(/&variant=[^&]+/g, '')
+            .replace(/fmt=[^&]+/, 'fmt=srv1')
+            .replace(/[?&]$/, '');
+          const enOrigUrl = noTlang.replace(/([?&])lang=[^&]+/, '$1lang=en');
+          const origCandidates = enOrigUrl !== noTlang ? [enOrigUrl, noTlang] : [noTlang];
+
+          let origXml = '';
+          for (const origUrl of origCandidates) {
+            try {
+              const out = await fetchViaCurl(origUrl);
+              if (out && (out.includes('<text') || out.includes('<p '))) {
+                origXml = out;
+                break;
+              }
+            } catch {}
+          }
+
+          if (origXml) {
+            const decodeXmlEntities = (s: string) =>
+              s
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&apos;/g, "'")
+                .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)));
+
+            const cues: { start: number; end: number; text: string }[] = [];
+            const tagRegex = /<(?:text|p)\b([^>]*)>([\s\S]*?)<\/(?:text|p)>/gi;
+            let m: RegExpExecArray | null;
+            while ((m = tagRegex.exec(origXml)) !== null) {
+              const attrs = m[1] || '';
+              const inner = m[2] || '';
+              const stM = attrs.match(/\bstart=["']([\d.]+)["']/i);
+              const durM = attrs.match(/\bdur=["']([\d.]+)["']/i);
+              const tM = attrs.match(/\bt=["'](\d+)["']/i);
+              const dM = attrs.match(/\bd=["'](\d+)["']/i);
+              let st = 0;
+              let dur = 3;
+              if (stM) {
+                st = parseFloat(stM[1]) || 0;
+                dur = durM ? (parseFloat(durM[1]) || 3) : 3;
+              } else if (tM) {
+                st = (parseInt(tM[1], 10) || 0) / 1000;
+                dur = dM ? ((parseInt(dM[1], 10) || 3000) / 1000) : 3;
+              }
+              const cleanTxt = decodeXmlEntities(inner.replace(/<[^>]+>/g, ''))
+                .replace(/[\r\n]+/g, ' ')
+                .trim();
+              if (cleanTxt) {
+                cues.push({ start: st, end: st + dur, text: cleanTxt });
+              }
+            }
+
+            if (cues.length > 0) {
+              for (let i = 0; i < cues.length - 1; i++) {
+                if (cues[i + 1].start > cues[i].start && cues[i].end > cues[i + 1].start) {
+                  cues[i].end = cues[i + 1].start;
+                }
+              }
+
+              const targetTl = lang.startsWith('fa') ? 'fa' : lang.replace(/-orig$/, '');
+              const batchSize = 50;
+              const batches: { start: number; end: number; text: string }[][] = [];
+              for (let i = 0; i < cues.length; i += batchSize) {
+                batches.push(cues.slice(i, i + batchSize));
+              }
+
+              await Promise.all(
+                batches.map(async (batch) => {
+                  const joined = batch.map(b => b.text).join('\n');
+                  const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetTl)}&dt=t&q=${encodeURIComponent(joined)}`;
+                  try {
+                    const resp = await fetch(gUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+                    if (resp.ok) {
+                      const gData: any = await resp.json();
+                      const fullTrans = Array.isArray(gData?.[0])
+                        ? gData[0].map((p: any) => p?.[0] || '').join('')
+                        : '';
+                      const lines = fullTrans.split('\n').map((l: string) => l.trim());
+                      for (let idx = 0; idx < batch.length; idx++) {
+                        if (lines[idx]) batch[idx].text = lines[idx];
+                      }
+                    }
+                  } catch {}
+                })
+              );
+
+              const escapeXml = (s: string) =>
+                s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              const xmlLines = cues.map(c => {
+                const dur = Math.max(0.2, Math.round((c.end - c.start) * 1000) / 1000);
+                return `<text start="${c.start.toFixed(3)}" dur="${dur.toFixed(3)}">${escapeXml(c.text)}</text>`;
+              });
+              rawSubContent = `<?xml version="1.0" encoding="utf-8" ?><transcript>${xmlLines.join('')}</transcript>`;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // Method 2: yt-dlp subtitle download & non-variant URL extraction fallback
+    if (!rawSubContent && engine !== 'pytubefix') {
+      try {
+        const tempPrefix = path.join(os.tmpdir(), `ytsub_${Date.now()}`);
+        const nodePath = process.execPath || '/usr/local/bin/node';
+        const ytdlpArgs = [
+          '-m', 'yt_dlp',
+          '--skip-download',
+          '--no-playlist',
+          '--no-warnings',
+          '--write-subs',
+          '--write-auto-subs',
+          '--sub-langs', lang,
+          '--sub-format', 'vtt/srt/best',
+          '-o', `${tempPrefix}.%(ext)s`
+        ];
+        if (fs.existsSync(nodePath)) {
+          ytdlpArgs.push('--js-runtimes', `node:${nodePath}`);
+        }
+        if (vpn.isRunning) {
+          ytdlpArgs.push('--proxy', vpn.httpProxy);
+        }
+        if (poTokenState.isRunning) {
+          ytdlpArgs.push('--extractor-args', `youtubepot-bgutilhttp:base_url=http://127.0.0.1:${poTokenState.port}`);
+        }
+        ytdlpArgs.push(url);
+
+        await execFileAsync('python3', ytdlpArgs, {
+          timeout: 35000,
+          env: { ...process.env, ...vpnEnv }
+        });
+
+        const tmpFiles = await fsPromises.readdir(os.tmpdir());
+        const basePrefix = path.basename(tempPrefix);
+        const matchFile = tmpFiles.find(f => f.startsWith(basePrefix));
+        if (matchFile) {
+          const fullTmpPath = path.join(os.tmpdir(), matchFile);
+          const candidateContent = await fsPromises.readFile(fullTmpPath, 'utf-8');
+          try { await fsPromises.unlink(fullTmpPath); } catch {}
+          if (isValidSubtitlePayload(candidateContent)) {
+            rawSubContent = candidateContent;
+          }
+        }
+      } catch {}
+    }
+
+    // Method 3: pytubefix subtitle helper (uses primary non-variant caption track + tlang)
+    if (!rawSubContent) {
+      try {
+        if (fs.existsSync(finalFilePath)) {
+          try { await fsPromises.unlink(finalFilePath); } catch {}
+        }
+        const helperScript = path.join(process.cwd(), 'youtube_pytubefix_helper.py');
+        const subQualityId = `sub_${isAuto ? 'auto' : 'manual'}_${lang}:${targetExt}`;
+        await execFileAsync('python3', [
+          helperScript,
+          'download',
+          url,
+          subQualityId,
+          'subtitle',
+          YOUTUBE_DOWNLOADS_DIR,
+          sanitizedTitle,
+          poPort || 'none',
+          vpn.isRunning ? vpn.httpProxy : 'none'
+        ], {
+          timeout: 35000,
+          env: { ...process.env, ...vpnEnv }
+        });
+
+        if (fs.existsSync(finalFilePath)) {
+          const ptContent = await fsPromises.readFile(finalFilePath, 'utf-8');
+          if (isValidSubtitlePayload(ptContent)) {
+            rawSubContent = ptContent;
+          }
+        }
+      } catch {}
+    }
+
+    if (!rawSubContent || !rawSubContent.trim()) {
+      return res.status(404).json({ error: 'محتوای زیرنویس برای این زبان یافت نشد یا قابل دریافت نیست' });
+    }
+
+    const convertedText = convertSubtitleContent(rawSubContent, targetExt);
+    await fsPromises.writeFile(finalFilePath, convertedText, 'utf-8');
+    const stat = await fsPromises.stat(finalFilePath);
+
+    const jobId = `ytsub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const job: YouTubeDownloadJob = {
+      id: jobId,
+      title: title || 'YouTube Subtitle',
+      url,
+      qualityId: `sub_${lang}_${targetExt}`,
+      formatLabel: `زیرنویس ${subtitleName || getSubtitleLangLabel(lang)} (${targetExt.toUpperCase()})`,
+      type: 'subtitle',
+      engine: engine === 'pytubefix' ? 'pytubefix' : 'ytdlp',
+      vpnUsed: vpn.isRunning,
+      vpnProxy: vpn.isRunning ? vpn.httpProxy : undefined,
+      status: 'completed',
+      progress: 100,
+      speed: 'پایان',
+      eta: 'تکمیل شد',
+      totalSize: formatBytesHuman(stat.size),
+      fileName: finalFileName,
+      filePath: finalFilePath,
+      createdAt: Date.now(),
+      completedAt: Date.now()
+    };
+
+    youtubeDownloadJobs.set(jobId, job);
+
+    res.json({
+      success: true,
+      jobId,
+      job,
+      fileName: finalFileName,
+      totalSize: job.totalSize,
+      content: convertedText,
+      downloadUrl: `/api/youtube/download/file/${jobId}`
+    });
+  } catch (err: any) {
+    console.error('Subtitle download error:', err);
+    res.status(500).json({ error: 'خطا در دانلود زیرنویس: ' + (err.message || 'خطای ناشناخته') });
+  }
+});
 
 // POST /api/youtube/download - Start background download job with selected engine
 app.post('/api/youtube/download', async (req: Request, res: Response) => {
@@ -5577,7 +6354,7 @@ app.post('/api/youtube/download', async (req: Request, res: Response) => {
       url,
       qualityId,
       formatLabel: formatLabel || qualityId,
-      type: type === 'audio' ? 'audio' : 'video',
+      type: type === 'audio' ? 'audio' : type === 'subtitle' ? 'subtitle' : 'video',
       engine: engine === 'pytubefix' ? 'pytubefix' : 'ytdlp',
       vpnUsed: vpn.isRunning,
       vpnProxy: vpn.isRunning ? vpn.httpProxy : undefined,
@@ -5640,7 +6417,12 @@ app.post('/api/youtube/download', async (req: Request, res: Response) => {
         childArgs.push('--extractor-args', `youtubepot-bgutilhttp:base_url=http://127.0.0.1:${poTokenState.port}`);
       }
 
-      if (type === 'audio') {
+      if (type === 'subtitle') {
+        const subParts = qualityId.split(':');
+        const subLang = subParts[0].replace('sub_manual_', '').replace('sub_auto_', '');
+        const subExt = subParts[1] || 'srt';
+        childArgs.push('--skip-download', '--write-subs', '--write-auto-subs', '--sub-langs', subLang, '--convert-subs', subExt);
+      } else if (type === 'audio') {
         childArgs.push('-f', 'bestaudio/best', '-x');
         if (qualityId === 'audio_m4a') {
           childArgs.push('--audio-format', 'm4a');
@@ -5806,6 +6588,823 @@ app.delete('/api/youtube/download/:id', async (req: Request, res: Response) => {
   res.json({ success: true, message: 'فایل با موفقیت حذف شد' });
 });
 
+// ---------------------- INSTAGRAM (AIOGRAPI) MANAGER API ----------------------
+const INSTAGRAM_ACCOUNTS_DIR = path.join(process.cwd(), 'instagram_accounts');
+const INSTAGRAM_ACTIVE_SESSION_PATH = path.join(process.cwd(), 'instagram_session.json');
+const INSTAGRAM_ACTIVE_INFO_PATH = path.join(process.cwd(), 'instagram_page_info.json');
+const INSTAGRAM_ACTIVE_COOKIES_PATH = path.join(process.cwd(), 'cookies.txt');
+
+if (!fs.existsSync(INSTAGRAM_ACCOUNTS_DIR)) {
+  try { fs.mkdirSync(INSTAGRAM_ACCOUNTS_DIR, { recursive: true }); } catch {}
+}
+
+function sanitizeIgUsername(u: string): string {
+  const clean = String(u || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9_.-]/g, '');
+  return clean || 'default_account';
+}
+
+function runInstagramHelper(action: string, payload: Record<string, any>, vpnEnv: Record<string, string> = {}): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const helperPath = path.join(process.cwd(), 'instagram_aiograpi_helper.py');
+    const child = spawn('python3', [helperPath, action], {
+      cwd: process.cwd(),
+      env: { ...process.env, PYTHONUNBUFFERED: '1', ...vpnEnv }
+    });
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+      reject(new Error('زمان پاسخگویی سرویس اینستاگرام (aiograpi) به پایان رسید (Timeout)'));
+    }, 90000);
+
+    child.stdout.on('data', (chunk) => {
+      stdoutData += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderrData += chunk.toString();
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const trimmed = stdoutData.trim();
+      if (trimmed) {
+        const lines = trimmed.split(/\r?\n/);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i].trim();
+          if (line.startsWith('{') && line.endsWith('}')) {
+            try {
+              return resolve(JSON.parse(line));
+            } catch {}
+          }
+        }
+        try {
+          return resolve(JSON.parse(trimmed));
+        } catch {}
+      }
+      reject(new Error(stderrData.trim() || `Process exited with code ${code}`));
+    });
+
+    try {
+      child.stdin.write(JSON.stringify(payload));
+      child.stdin.end();
+    } catch (e) {
+      clearTimeout(timer);
+      reject(e);
+    }
+  });
+}
+
+async function syncRootSessionIntoAccountsIfNeeded() {
+  try {
+    if (!fs.existsSync(INSTAGRAM_ACTIVE_SESSION_PATH)) return;
+    const rawSess = await fsPromises.readFile(INSTAGRAM_ACTIVE_SESSION_PATH, 'utf-8');
+    const sessObj = JSON.parse(rawSess);
+    let pageInfoObj: any = {};
+    if (fs.existsSync(INSTAGRAM_ACTIVE_INFO_PATH)) {
+      try {
+        pageInfoObj = JSON.parse(await fsPromises.readFile(INSTAGRAM_ACTIVE_INFO_PATH, 'utf-8'));
+      } catch {}
+    }
+    const dsUserId = sessObj?.authorization_data?.ds_user_id || '';
+    const uname = sanitizeIgUsername(pageInfoObj?.username || (dsUserId ? `user_${dsUserId}` : 'active_account'));
+    const accDir = path.join(INSTAGRAM_ACCOUNTS_DIR, uname);
+    const accSessPath = path.join(accDir, 'instagram_session.json');
+
+    if (!fs.existsSync(accSessPath)) {
+      await fsPromises.mkdir(accDir, { recursive: true });
+      await fsPromises.writeFile(accSessPath, JSON.stringify(sessObj, null, 4), 'utf-8');
+      if (Object.keys(pageInfoObj).length > 0) {
+        await fsPromises.writeFile(path.join(accDir, 'instagram_page_info.json'), JSON.stringify(pageInfoObj, null, 2), 'utf-8');
+      } else {
+        const defaultInfo = {
+          username: uname,
+          full_name: '',
+          biography: '',
+          follower_count: 0,
+          following_count: 0,
+          media_count: 0,
+          is_verified: false,
+          profile_pic_url: '',
+          cached_at: new Date().toISOString()
+        };
+        await fsPromises.writeFile(path.join(accDir, 'instagram_page_info.json'), JSON.stringify(defaultInfo, null, 2), 'utf-8');
+      }
+      if (fs.existsSync(INSTAGRAM_ACTIVE_COOKIES_PATH)) {
+        const rawCookies = await fsPromises.readFile(INSTAGRAM_ACTIVE_COOKIES_PATH, 'utf-8');
+        await fsPromises.writeFile(path.join(accDir, 'cookies.txt'), rawCookies, 'utf-8');
+      }
+    }
+  } catch {}
+}
+
+// GET /api/instagram/accounts - List all saved accounts, active session status, and device presets
+app.get('/api/instagram/accounts', async (req: Request, res: Response) => {
+  try {
+    await syncRootSessionIntoAccountsIfNeeded();
+    const vpn = await getVpnProxyConfig();
+
+    let activeDsUserId = '';
+    let activeUsername = '';
+    if (fs.existsSync(INSTAGRAM_ACTIVE_SESSION_PATH)) {
+      try {
+        const activeSess = JSON.parse(await fsPromises.readFile(INSTAGRAM_ACTIVE_SESSION_PATH, 'utf-8'));
+        activeDsUserId = String(activeSess?.authorization_data?.ds_user_id || '');
+      } catch {}
+    }
+    if (fs.existsSync(INSTAGRAM_ACTIVE_INFO_PATH)) {
+      try {
+        const activeInfo = JSON.parse(await fsPromises.readFile(INSTAGRAM_ACTIVE_INFO_PATH, 'utf-8'));
+        activeUsername = sanitizeIgUsername(activeInfo?.username || '');
+      } catch {}
+    }
+
+    const entries = fs.existsSync(INSTAGRAM_ACCOUNTS_DIR)
+      ? await fsPromises.readdir(INSTAGRAM_ACCOUNTS_DIR, { withFileTypes: true })
+      : [];
+
+    const accounts: any[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const folderName = entry.name;
+      const accDir = path.join(INSTAGRAM_ACCOUNTS_DIR, folderName);
+      const sessFile = path.join(accDir, 'instagram_session.json');
+      const infoFile = path.join(accDir, 'instagram_page_info.json');
+      const cookiesFile = path.join(accDir, 'cookies.txt');
+
+      if (!fs.existsSync(sessFile)) continue;
+
+      try {
+        const sessionObj = JSON.parse(await fsPromises.readFile(sessFile, 'utf-8'));
+        let pageInfoObj: any = {
+          username: folderName,
+          full_name: '',
+          biography: '',
+          follower_count: 0,
+          following_count: 0,
+          media_count: 0,
+          is_verified: false,
+          profile_pic_url: '',
+          cached_at: new Date().toISOString()
+        };
+        if (fs.existsSync(infoFile)) {
+          try {
+            pageInfoObj = { ...pageInfoObj, ...JSON.parse(await fsPromises.readFile(infoFile, 'utf-8')) };
+          } catch {}
+        }
+
+        let cookiesTxt = '';
+        if (fs.existsSync(cookiesFile)) {
+          try {
+            cookiesTxt = await fsPromises.readFile(cookiesFile, 'utf-8');
+          } catch {}
+        }
+
+        const dsUserId = String(sessionObj?.authorization_data?.ds_user_id || '');
+        const uname = pageInfoObj.username || folderName;
+        const isActive =
+          (activeUsername && sanitizeIgUsername(uname) === activeUsername) ||
+          (activeDsUserId && dsUserId && activeDsUserId === dsUserId);
+
+        accounts.push({
+          id: folderName,
+          username: uname,
+          isActive: Boolean(isActive),
+          pageInfo: pageInfoObj,
+          session: sessionObj,
+          cookiesTxt,
+          hasCookiesTxt: Boolean(cookiesTxt.trim()),
+          summary: {
+            dsUserId,
+            model: sessionObj?.device_settings?.model || 'Pixel 8 Pro',
+            manufacturer: sessionObj?.device_settings?.manufacturer || 'Google/google',
+            device: sessionObj?.device_settings?.device || 'husky',
+            androidVersion: sessionObj?.device_settings?.android_version || 34,
+            androidRelease: sessionObj?.device_settings?.android_release || '14',
+            appVersion: sessionObj?.device_settings?.app_version || '428.0.0.47.67',
+            locale: sessionObj?.locale || 'en_US',
+            country: sessionObj?.country || 'US',
+            lastLogin: sessionObj?.last_login || null,
+            userAgent: sessionObj?.user_agent || ''
+          },
+          files: {
+            accountSessionPath: sessFile,
+            accountPageInfoPath: infoFile,
+            accountCookiesPath: cookiesFile,
+            rootSessionPath: INSTAGRAM_ACTIVE_SESSION_PATH,
+            rootPageInfoPath: INSTAGRAM_ACTIVE_INFO_PATH,
+            rootCookiesPath: INSTAGRAM_ACTIVE_COOKIES_PATH
+          }
+        });
+      } catch {}
+    }
+
+    // Sort active first, then by lastLogin desc
+    accounts.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      return (b.summary?.lastLogin || 0) - (a.summary?.lastLogin || 0);
+    });
+
+    res.json({
+      success: true,
+      accounts,
+      activeUsername: accounts.find(a => a.isActive)?.username || null,
+      vpnActive: vpn.isRunning,
+      httpProxy: vpn.httpProxy,
+      socksProxy: vpn.socksProxy,
+      rootFilesExist: {
+        session: fs.existsSync(INSTAGRAM_ACTIVE_SESSION_PATH),
+        pageInfo: fs.existsSync(INSTAGRAM_ACTIVE_INFO_PATH),
+        cookies: fs.existsSync(INSTAGRAM_ACTIVE_COOKIES_PATH)
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در دریافت لیست اکانت‌های اینستاگرام: ' + err.message });
+  }
+});
+
+// POST /api/instagram/login - Login with username/password (+ 2FA / TOTP seed / Challenge code) via aiograpi
+app.post('/api/instagram/login', async (req: Request, res: Response) => {
+  try {
+    const {
+      username,
+      password,
+      verification_code = '',
+      totp_seed = '',
+      device_profile = 'pixel_9_pro_xl_a15',
+      app_version = '448.0.0.0.20',
+      use_vpn = true,
+      custom_proxy = '',
+      force_new_device = false
+    } = req.body || {};
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'نام کاربری و رمز عبور الزامی است' });
+    }
+
+    const vpn = await getVpnProxyConfig();
+    let effectiveProxy = '';
+    if (custom_proxy && String(custom_proxy).trim()) {
+      effectiveProxy = String(custom_proxy).trim();
+    } else if (use_vpn && vpn.isRunning) {
+      effectiveProxy = vpn.httpProxy;
+    }
+
+    const vpnEnv = effectiveProxy ? {
+      HTTP_PROXY: effectiveProxy,
+      HTTPS_PROXY: effectiveProxy,
+      http_proxy: effectiveProxy,
+      https_proxy: effectiveProxy
+    } : {};
+
+    const result = await runInstagramHelper('login', {
+      username,
+      password,
+      verification_code,
+      totp_seed,
+      device_profile,
+      app_version,
+      proxy: effectiveProxy,
+      force_new_device
+    }, vpnEnv);
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'خطا در فرآیند ورود با aiograpi: ' + (err.message || 'خطای ناشناخته')
+    });
+  }
+});
+
+// POST /api/instagram/login-sessionid - Login with Instagram sessionid via aiograpi
+app.post('/api/instagram/login-sessionid', async (req: Request, res: Response) => {
+  try {
+    const {
+      sessionid,
+      username = '',
+      device_profile = 'pixel_9_pro_xl_a15',
+      app_version = '448.0.0.0.20',
+      use_vpn = true,
+      custom_proxy = ''
+    } = req.body || {};
+
+    if (!sessionid || String(sessionid).trim().length < 20) {
+      return res.status(400).json({ error: 'مقدار sessionid معتبر نیست' });
+    }
+
+    const vpn = await getVpnProxyConfig();
+    const effectiveProxy = (custom_proxy && String(custom_proxy).trim())
+      ? String(custom_proxy).trim()
+      : (use_vpn && vpn.isRunning ? vpn.httpProxy : '');
+
+    const result = await runInstagramHelper('login_sessionid', {
+      sessionid: String(sessionid).trim(),
+      username: String(username).trim(),
+      device_profile,
+      app_version,
+      proxy: effectiveProxy
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'خطا در ورود با SessionID: ' + (err.message || 'خطای ناشناخته')
+    });
+  }
+});
+
+// POST /api/instagram/import-session - Import existing instagram_session.json (& optional instagram_page_info.json)
+app.post('/api/instagram/import-session', async (req: Request, res: Response) => {
+  try {
+    const {
+      session,
+      page_info = null,
+      username = '',
+      use_vpn = true,
+      custom_proxy = ''
+    } = req.body || {};
+
+    if (!session) {
+      return res.status(400).json({ error: 'محتوای فایل instagram_session.json الزامی است' });
+    }
+
+    const vpn = await getVpnProxyConfig();
+    const effectiveProxy = (custom_proxy && String(custom_proxy).trim())
+      ? String(custom_proxy).trim()
+      : (use_vpn && vpn.isRunning ? vpn.httpProxy : '');
+
+    const result = await runInstagramHelper('import_session', {
+      session,
+      page_info,
+      username,
+      proxy: effectiveProxy
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'خطا در وارد کردن سشن: ' + (err.message || 'خطای ناشناخته')
+    });
+  }
+});
+
+// POST /api/instagram/activate/:username - Set account as active (writes root instagram_session.json, instagram_page_info.json, cookies.txt)
+app.post('/api/instagram/activate/:username', async (req: Request, res: Response) => {
+  try {
+    const uname = sanitizeIgUsername(req.params.username);
+    const accDir = path.join(INSTAGRAM_ACCOUNTS_DIR, uname);
+    const sessFile = path.join(accDir, 'instagram_session.json');
+    const infoFile = path.join(accDir, 'instagram_page_info.json');
+    const cookiesFile = path.join(accDir, 'cookies.txt');
+
+    if (!fs.existsSync(sessFile)) {
+      return res.status(404).json({ error: 'سشن اکانت مورد نظر یافت نشد' });
+    }
+
+    await fsPromises.copyFile(sessFile, INSTAGRAM_ACTIVE_SESSION_PATH);
+    if (fs.existsSync(infoFile)) {
+      await fsPromises.copyFile(infoFile, INSTAGRAM_ACTIVE_INFO_PATH);
+    }
+    if (fs.existsSync(cookiesFile)) {
+      await fsPromises.copyFile(cookiesFile, INSTAGRAM_ACTIVE_COOKIES_PATH);
+    }
+
+    const tbDir = path.join(process.cwd(), 'telegram_bot');
+    if (fs.existsSync(tbDir)) {
+      try {
+        await fsPromises.copyFile(sessFile, path.join(tbDir, 'instagram_session.json'));
+        if (fs.existsSync(infoFile)) {
+          await fsPromises.copyFile(infoFile, path.join(tbDir, 'instagram_page_info.json'));
+        }
+        if (fs.existsSync(cookiesFile)) {
+          await fsPromises.copyFile(cookiesFile, path.join(tbDir, 'cookies.txt'));
+        }
+      } catch {}
+    }
+
+    res.json({
+      success: true,
+      username: uname,
+      message: `اکانت @${uname} به عنوان سشن اصلی (instagram_session.json و instagram_page_info.json) فعال شد.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در فعال‌سازی سشن: ' + err.message });
+  }
+});
+
+// POST /api/instagram/verify/:username - Verify session validity and refresh instagram_page_info.json via aiograpi
+app.post('/api/instagram/verify/:username', async (req: Request, res: Response) => {
+  try {
+    const uname = sanitizeIgUsername(req.params.username);
+    const vpn = await getVpnProxyConfig();
+    const effectiveProxy = vpn.isRunning ? vpn.httpProxy : '';
+
+    const result = await runInstagramHelper('verify', {
+      username: uname,
+      proxy: effectiveProxy
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'خطا در بررسی وضعیت سشن: ' + err.message
+    });
+  }
+});
+
+// POST /api/instagram/extract-cookies/:username - Generate and save Netscape cookies.txt from session
+app.post('/api/instagram/extract-cookies/:username', async (req: Request, res: Response) => {
+  try {
+    const uname = sanitizeIgUsername(req.params.username);
+    const vpn = await getVpnProxyConfig();
+    const effectiveProxy = vpn.isRunning ? vpn.httpProxy : '';
+
+    const result = await runInstagramHelper('extract_cookies', {
+      username: uname,
+      proxy: effectiveProxy
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'خطا در استخراج فایل cookies.txt: ' + err.message
+    });
+  }
+});
+
+// GET /api/instagram/download/:username/:fileType - Download instagram_session.json, instagram_page_info.json, or cookies.txt
+app.get('/api/instagram/download/:username/:fileType', async (req: Request, res: Response) => {
+  try {
+    const uname = sanitizeIgUsername(req.params.username);
+    const fileType = req.params.fileType;
+    const accDir = path.join(INSTAGRAM_ACCOUNTS_DIR, uname);
+
+    let targetPath = '';
+    let downloadName = '';
+
+    if (fileType === 'session') {
+      targetPath = path.join(accDir, 'instagram_session.json');
+      if (!fs.existsSync(targetPath)) targetPath = INSTAGRAM_ACTIVE_SESSION_PATH;
+      downloadName = 'instagram_session.json';
+    } else if (fileType === 'page_info') {
+      targetPath = path.join(accDir, 'instagram_page_info.json');
+      if (!fs.existsSync(targetPath)) targetPath = INSTAGRAM_ACTIVE_INFO_PATH;
+      downloadName = 'instagram_page_info.json';
+    } else if (fileType === 'cookies') {
+      targetPath = path.join(accDir, 'cookies.txt');
+      if (!fs.existsSync(targetPath)) {
+        // Generate on the fly if missing
+        await runInstagramHelper('extract_cookies', { username: uname });
+      }
+      if (!fs.existsSync(targetPath)) targetPath = INSTAGRAM_ACTIVE_COOKIES_PATH;
+      downloadName = 'cookies.txt';
+    } else {
+      return res.status(400).json({ error: 'نوع فایل درخواستی نامعتبر است' });
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).json({ error: `فایل ${downloadName} یافت نشد` });
+    }
+
+    const content = await fsPromises.readFile(targetPath, 'utf-8');
+    res.setHeader('Content-Type', fileType === 'cookies' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    return res.status(200).send(content);
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در دانلود فایل: ' + err.message });
+  }
+});
+
+// DELETE /api/instagram/accounts/:username - Delete saved account and its session files
+app.delete('/api/instagram/accounts/:username', async (req: Request, res: Response) => {
+  try {
+    const uname = sanitizeIgUsername(req.params.username);
+    const accDir = path.join(INSTAGRAM_ACCOUNTS_DIR, uname);
+
+    let wasActive = false;
+    if (fs.existsSync(INSTAGRAM_ACTIVE_INFO_PATH)) {
+      try {
+        const activeInfo = JSON.parse(await fsPromises.readFile(INSTAGRAM_ACTIVE_INFO_PATH, 'utf-8'));
+        if (sanitizeIgUsername(activeInfo?.username || '') === uname) {
+          wasActive = true;
+        }
+      } catch {}
+    }
+
+    if (fs.existsSync(accDir)) {
+      await fsPromises.rm(accDir, { recursive: true, force: true });
+    }
+
+    if (wasActive) {
+      for (const f of [INSTAGRAM_ACTIVE_SESSION_PATH, INSTAGRAM_ACTIVE_INFO_PATH, INSTAGRAM_ACTIVE_COOKIES_PATH]) {
+        if (fs.existsSync(f)) {
+          try { await fsPromises.unlink(f); } catch {}
+        }
+      }
+      // If another account exists, promote the first available one to active
+      const remaining = fs.existsSync(INSTAGRAM_ACCOUNTS_DIR)
+        ? await fsPromises.readdir(INSTAGRAM_ACCOUNTS_DIR, { withFileTypes: true })
+        : [];
+      for (const entry of remaining) {
+        if (entry.isDirectory()) {
+          const nextDir = path.join(INSTAGRAM_ACCOUNTS_DIR, entry.name);
+          const nextSess = path.join(nextDir, 'instagram_session.json');
+          const nextInfo = path.join(nextDir, 'instagram_page_info.json');
+          const nextCookies = path.join(nextDir, 'cookies.txt');
+          if (fs.existsSync(nextSess)) {
+            await fsPromises.copyFile(nextSess, INSTAGRAM_ACTIVE_SESSION_PATH);
+            if (fs.existsSync(nextInfo)) await fsPromises.copyFile(nextInfo, INSTAGRAM_ACTIVE_INFO_PATH);
+            if (fs.existsSync(nextCookies)) await fsPromises.copyFile(nextCookies, INSTAGRAM_ACTIVE_COOKIES_PATH);
+            break;
+          }
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `سشن و اطلاعات اکانت @${uname} با موفقیت حذف شد.`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در حذف سشن: ' + err.message });
+  }
+});
+
+// POST /api/instagram/downloader/extract - Extract Post, Reel, Carousel, Video, or Story media
+app.post('/api/instagram/downloader/extract', async (req: Request, res: Response) => {
+  try {
+    const { url, account } = req.body || {};
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'آدرس لینک اینستاگرام الزامی است.' });
+    }
+    const vpn = await getVpnProxyConfig();
+    const vpnEnv: Record<string, string> = {};
+    if (vpn.isRunning && vpn.httpProxy) {
+      vpnEnv.HTTP_PROXY = vpn.httpProxy;
+      vpnEnv.HTTPS_PROXY = vpn.httpProxy;
+      vpnEnv.http_proxy = vpn.httpProxy;
+      vpnEnv.https_proxy = vpn.httpProxy;
+    }
+    const result = await runInstagramHelper(
+      'extract_media',
+      {
+        url: url.trim(),
+        account: typeof account === 'string' ? account.trim() : undefined,
+        proxy: vpn.isRunning ? vpn.httpProxy : ''
+      },
+      vpnEnv
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'خطا در استخراج مدیا از اینستاگرام' });
+  }
+});
+
+// POST /api/instagram/downloader/profile - Fetch Instagram Page / Profile Info & Stats
+app.post('/api/instagram/downloader/profile', async (req: Request, res: Response) => {
+  try {
+    const { username, account } = req.body || {};
+    if (!username || typeof username !== 'string') {
+      return res.status(400).json({ error: 'نام کاربری یا آیدی پیج الزامی است.' });
+    }
+    const vpn = await getVpnProxyConfig();
+    const vpnEnv: Record<string, string> = {};
+    if (vpn.isRunning && vpn.httpProxy) {
+      vpnEnv.HTTP_PROXY = vpn.httpProxy;
+      vpnEnv.HTTPS_PROXY = vpn.httpProxy;
+      vpnEnv.http_proxy = vpn.httpProxy;
+      vpnEnv.https_proxy = vpn.httpProxy;
+    }
+    const result = await runInstagramHelper(
+      'fetch_profile',
+      {
+        username: username.trim(),
+        account: typeof account === 'string' ? account.trim() : undefined,
+        proxy: vpn.isRunning ? vpn.httpProxy : ''
+      },
+      vpnEnv
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'خطا در استعلام اطلاعات پیج اینستاگرام' });
+  }
+});
+
+// POST /api/instagram/downloader/stories - Fetch active 24h stories
+app.post('/api/instagram/downloader/stories', async (req: Request, res: Response) => {
+  try {
+    const { username, account } = req.body || {};
+    if (!username || typeof username !== 'string') {
+      return res.status(400).json({ error: 'نام کاربری پیج الزامی است.' });
+    }
+    const vpn = await getVpnProxyConfig();
+    const vpnEnv: Record<string, string> = {};
+    if (vpn.isRunning && vpn.httpProxy) {
+      vpnEnv.HTTP_PROXY = vpn.httpProxy;
+      vpnEnv.HTTPS_PROXY = vpn.httpProxy;
+      vpnEnv.http_proxy = vpn.httpProxy;
+      vpnEnv.https_proxy = vpn.httpProxy;
+    }
+    const result = await runInstagramHelper(
+      'fetch_stories',
+      {
+        username: username.trim(),
+        account: typeof account === 'string' ? account.trim() : undefined,
+        proxy: vpn.isRunning ? vpn.httpProxy : ''
+      },
+      vpnEnv
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'خطا در دریافت استوری‌های اینستاگرام' });
+  }
+});
+
+// POST /api/instagram/downloader/highlights - Fetch story highlights albums
+app.post('/api/instagram/downloader/highlights', async (req: Request, res: Response) => {
+  try {
+    const { username, account } = req.body || {};
+    if (!username || typeof username !== 'string') {
+      return res.status(400).json({ error: 'نام کاربری یا آیدی پیج الزامی است.' });
+    }
+    const vpn = await getVpnProxyConfig();
+    const vpnEnv: Record<string, string> = {};
+    if (vpn.isRunning && vpn.httpProxy) {
+      vpnEnv.HTTP_PROXY = vpn.httpProxy;
+      vpnEnv.HTTPS_PROXY = vpn.httpProxy;
+      vpnEnv.http_proxy = vpn.httpProxy;
+      vpnEnv.https_proxy = vpn.httpProxy;
+    }
+    const result = await runInstagramHelper(
+      'fetch_highlights',
+      {
+        username: username.trim(),
+        account: typeof account === 'string' ? account.trim() : undefined,
+        proxy: vpn.isRunning ? vpn.httpProxy : ''
+      },
+      vpnEnv
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'خطا در استخراج هایلایت‌های اینستاگرام' });
+  }
+});
+
+// POST /api/instagram/downloader/highlight-items - Fetch story items of a specific highlight
+app.post('/api/instagram/downloader/highlight-items', async (req: Request, res: Response) => {
+  try {
+    const { highlight_pk, account } = req.body || {};
+    if (!highlight_pk || typeof highlight_pk !== 'string') {
+      return res.status(400).json({ error: 'شناسه هایلایت الزامی است.' });
+    }
+    const vpn = await getVpnProxyConfig();
+    const vpnEnv: Record<string, string> = {};
+    if (vpn.isRunning && vpn.httpProxy) {
+      vpnEnv.HTTP_PROXY = vpn.httpProxy;
+      vpnEnv.HTTPS_PROXY = vpn.httpProxy;
+      vpnEnv.http_proxy = vpn.httpProxy;
+      vpnEnv.https_proxy = vpn.httpProxy;
+    }
+    const result = await runInstagramHelper(
+      'fetch_highlight_items',
+      {
+        highlight_pk: highlight_pk.trim(),
+        account: typeof account === 'string' ? account.trim() : undefined,
+        proxy: vpn.isRunning ? vpn.httpProxy : ''
+      },
+      vpnEnv
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'خطا در استعلام موارد هایلایت' });
+  }
+});
+
+// POST /api/instagram/downloader/download-file - Download media directly to server disk
+app.post('/api/instagram/downloader/download-file', async (req: Request, res: Response) => {
+  try {
+    const { url, filename, type } = req.body || {};
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'آدرس مدیا الزامی است.' });
+    }
+    const vpn = await getVpnProxyConfig();
+    const vpnEnv: Record<string, string> = {};
+    if (vpn.isRunning && vpn.httpProxy) {
+      vpnEnv.HTTP_PROXY = vpn.httpProxy;
+      vpnEnv.HTTPS_PROXY = vpn.httpProxy;
+      vpnEnv.http_proxy = vpn.httpProxy;
+      vpnEnv.https_proxy = vpn.httpProxy;
+    }
+    const result = await runInstagramHelper(
+      'download_file',
+      {
+        url: url.trim(),
+        filename: typeof filename === 'string' ? filename.trim() : undefined,
+        type: typeof type === 'string' ? type.trim() : 'video',
+        proxy: vpn.isRunning ? vpn.httpProxy : ''
+      },
+      vpnEnv
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'خطا در ذخیره فایل مدیا' });
+  }
+});
+
+// GET /api/instagram/downloader/file/:filename - Direct download of saved Instagram media
+app.get('/api/instagram/downloader/file/:filename', async (req: Request, res: Response) => {
+  try {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(process.cwd(), 'downloads', filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'فایل مورد نظر یافت نشد.' });
+    }
+    res.download(filePath, filename);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/instagram/avatar-proxy - Proxy Instagram CDN profile pictures to avoid CORP/CORS browser blocks
+app.get('/api/instagram/avatar-proxy', async (req: Request, res: Response) => {
+  try {
+    const rawUrl = String(req.query.url || '').trim();
+    if (!rawUrl || !rawUrl.startsWith('http')) {
+      return res.status(400).end();
+    }
+    const vpn = await getVpnProxyConfig();
+    const curlArgs = ['-sSL', '--max-time', '15', '-A', 'Mozilla/5.0'];
+    if (vpn.isRunning && vpn.httpProxy) {
+      curlArgs.push('-x', vpn.httpProxy);
+    }
+    curlArgs.push(rawUrl);
+
+    const { stdout } = await execFileAsync('curl', curlArgs, {
+      encoding: 'buffer' as any,
+      maxBuffer: 20 * 1024 * 1024
+    });
+
+    if (stdout && stdout.length > 50) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(stdout);
+    }
+    res.status(404).end();
+  } catch {
+    res.status(404).end();
+  }
+});
+
+// GET /api/instagram/media-proxy - Stream / proxy Instagram video & image URLs to browser
+app.get('/api/instagram/media-proxy', async (req: Request, res: Response) => {
+  try {
+    const rawUrl = String(req.query.url || '').trim();
+    if (!rawUrl || !rawUrl.startsWith('http')) {
+      return res.status(400).end();
+    }
+    const vpn = await getVpnProxyConfig();
+    const curlArgs = ['-sSL', '--max-time', '30', '-A', 'Mozilla/5.0'];
+    if (vpn.isRunning && vpn.httpProxy) {
+      curlArgs.push('-x', vpn.httpProxy);
+    }
+    curlArgs.push(rawUrl);
+
+    const isVideo = rawUrl.includes('.mp4') || String(req.query.type || '') === 'video';
+    const { stdout } = await execFileAsync('curl', curlArgs, {
+      encoding: 'buffer' as any,
+      maxBuffer: 150 * 1024 * 1024
+    });
+
+    if (stdout && stdout.length > 50) {
+      res.setHeader('Content-Type', isVideo ? 'video/mp4' : 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      if (req.query.download === '1') {
+        const ext = isVideo ? 'mp4' : 'jpg';
+        const name = String(req.query.name || `instagram_media_${Date.now()}.${ext}`);
+        res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+      }
+      return res.send(stdout);
+    }
+    res.status(404).end();
+  } catch {
+    res.status(404).end();
+  }
+});
+
 // 404 Handler for /api routes to prevent falling through to Vite SPA index.html
 app.use('/api/*', (req: Request, res: Response) => {
   res.status(404).json({ error: `API endpoint ${req.originalUrl} not found` });
@@ -5815,25 +7414,48 @@ app.use('/api/*', (req: Request, res: Response) => {
 // Auto-verify and install prerequisites on server startup/deployment
 async function ensurePrerequisitesOnBoot() {
   try {
+    const homeDir = os.homedir() || '/root';
+    const denoBinDir = path.join(homeDir, '.deno', 'bin');
+    if (!(process.env.PATH || '').includes(denoBinDir)) {
+      process.env.DENO_INSTALL = path.join(homeDir, '.deno');
+      process.env.PATH = `${denoBinDir}:/root/.deno/bin:${process.env.PATH || ''}:/usr/local/bin`;
+    }
+
     const downloadsDir = path.join(process.cwd(), 'downloads');
     if (!fs.existsSync(downloadsDir)) {
       fs.mkdirSync(downloadsDir, { recursive: true });
     }
 
-    // Quick check if python packages (yt-dlp, pytubefix) are present
-    exec('python3 -c "import yt_dlp, pytubefix"', (err) => {
+    // Ensure Deno is installed and linked to /usr/local/bin/deno
+    exec('deno --version', (denoErr) => {
+      if (denoErr) {
+        console.log('[Prerequisites] Deno not found. Auto-installing Deno...');
+        exec('curl -fsSL https://deno.land/install.sh | sh && ln -sf "$HOME/.deno/bin/deno" /usr/local/bin/deno', (installDenoErr) => {
+          if (installDenoErr) {
+            console.error('[Prerequisites] Deno auto-install warning:', installDenoErr.message);
+          } else {
+            console.log('[Prerequisites] Deno installed successfully.');
+          }
+        });
+      } else {
+        console.log('[Prerequisites] Deno verified.');
+      }
+    });
+
+    // Quick check if python packages (yt-dlp, pytubefix, aiograpi) are present
+    exec('python3 -c "import yt_dlp, pytubefix, aiograpi"', (err) => {
       if (err) {
-        console.log('[Prerequisites] Missing Python modules (yt-dlp/pytubefix) detected. Auto-installing...');
-        const installCmd = 'python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider || pip3 install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider || (curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --break-system-packages && python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider)';
+        console.log('[Prerequisites] Missing Python modules (yt-dlp/pytubefix/aiograpi) detected. Auto-installing...');
+        const installCmd = 'python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider aiograpi instagrapi curl-cffi Pillow || pip3 install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider aiograpi instagrapi curl-cffi Pillow || (curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --break-system-packages && python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider aiograpi instagrapi curl-cffi Pillow)';
         exec(installCmd, (installErr) => {
           if (installErr) {
             console.error('[Prerequisites] Auto-install warning:', installErr.message);
           } else {
-            console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix) installed successfully.');
+            console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix, aiograpi) installed successfully.');
           }
         });
       } else {
-        console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix) verified.');
+        console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix, aiograpi) verified.');
       }
     });
   } catch (e: any) {

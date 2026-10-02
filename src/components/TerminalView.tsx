@@ -168,10 +168,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
 
   const terminalScrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ctrlAPressedRef = useRef<boolean>(false);
   const ctrlATimeoutRef = useRef<any>(null);
+
+  // Auto-resize terminal textarea height when multi-line command changes
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      const nextHeight = Math.min(Math.max(inputRef.current.scrollHeight, 24), 160);
+      inputRef.current.style.height = `${nextHeight}px`;
+    }
+  }, [activeTab?.command, activeTabId, fontSizeIdx]);
 
   // Contained scroll-to-bottom without whole-window jumping
   const scrollToBottom = (instant = false) => {
@@ -482,6 +491,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
               } else if (data.type === 'exit') {
                 updateTab(targetTabId, prev => ({
                   ...prev,
+                  cwd: data.cwd || prev.cwd,
                   history: prev.history.map(item =>
                     item.id === itemId
                       ? { ...item, isRunning: false, exitCode: data.exitCode }
@@ -683,7 +693,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Ctrl + L (Clear terminal screen)
     if (e.ctrlKey && (e.key === 'l' || e.key === 'L')) {
       e.preventDefault();
@@ -691,17 +701,27 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
       return;
     }
 
-    // Arrow Up (History previous)
+    // Arrow Up (History previous - only when cursor is on the first line)
     if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      navigateHistory('up');
+      const cmd = activeTab?.command || '';
+      const cursorPos = e.currentTarget?.selectionStart ?? 0;
+      const textBeforeCursor = cmd.slice(0, cursorPos);
+      if (!textBeforeCursor.includes('\n')) {
+        e.preventDefault();
+        navigateHistory('up');
+      }
       return;
     }
 
-    // Arrow Down (History next)
+    // Arrow Down (History next - only when cursor is on the last line)
     if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      navigateHistory('down');
+      const cmd = activeTab?.command || '';
+      const cursorPos = e.currentTarget?.selectionEnd ?? cmd.length;
+      const textAfterCursor = cmd.slice(cursorPos);
+      if (!textAfterCursor.includes('\n')) {
+        e.preventDefault();
+        navigateHistory('down');
+      }
       return;
     }
 
@@ -728,8 +748,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
       return;
     }
 
-    // Enter key execution or input submission
+    // Enter key execution or input submission (Shift+Enter inserts newline)
     if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        return;
+      }
+      e.preventDefault();
       if (activeTab?.isExecuting) {
         sendInputToRunningProcess(activeTab.command, activeTab.id);
       } else {
@@ -1059,7 +1083,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                       </span>
                       <span className="text-neutral-200">$</span>
                     </div>
-                    <span className={`text-neutral-100 font-semibold break-all ${FONT_SIZES[fontSizeIdx].classCmd} font-mono select-text cursor-text selection:bg-blue-600/50 selection:text-white`}>
+                    <span className={`text-neutral-100 font-semibold whitespace-pre-wrap break-all ${FONT_SIZES[fontSizeIdx].classCmd} font-mono select-text cursor-text selection:bg-blue-600/50 selection:text-white`}>
                       {item.command}
                     </span>
                     {item.isRunning && (
@@ -1104,6 +1128,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
               { label: 'y (بله)', action: () => activeTab?.isExecuting ? sendInputToRunningProcess('y', activeTab.id) : updateTab(activeTab.id, prev => ({ ...prev, command: prev.command + 'y' })) },
               { label: 'n (خیر)', action: () => activeTab?.isExecuting ? sendInputToRunningProcess('n', activeTab.id) : updateTab(activeTab.id, prev => ({ ...prev, command: prev.command + 'n' })) },
               { label: '↵ Enter', action: () => activeTab?.isExecuting ? sendInputToRunningProcess(activeTab.command || '', activeTab.id) : executeCommand() },
+              { label: isFa ? '⇧↵ خط جدید' : '⇧↵ New Line', action: () => {
+                updateTab(activeTab.id, prev => ({ ...prev, command: prev.command + '\n' }));
+                setTimeout(() => inputRef.current?.focus(), 20);
+              } },
               { label: '+Tab', action: handleAddNewTab },
               { label: 'A-', action: handleZoomOut },
               { label: 'A+', action: handleZoomIn },
@@ -1126,8 +1154,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
           </div>
 
           {/* Active Input Line */}
-          <div className="flex items-center gap-1.5 sm:gap-2 pt-2 border-t border-white/5 w-full max-w-full overflow-hidden shrink-0">
-            <div className="flex items-center gap-1 text-xs shrink-0 select-none">
+          <div className={`flex ${activeTab?.command?.includes('\n') ? 'items-start' : 'items-center'} gap-1.5 sm:gap-2 pt-2 border-t border-white/5 w-full max-w-full overflow-hidden shrink-0`}>
+            <div className={`flex items-center gap-1 text-xs shrink-0 select-none ${activeTab?.command?.includes('\n') ? 'pt-1' : ''}`}>
               <span className="text-emerald-400 font-bold text-[11px] sm:text-xs">root@server</span>
               <span className="text-neutral-400">:</span>
               <span className="text-blue-400 font-medium truncate max-w-[70px] sm:max-w-[200px] text-[11px] sm:text-xs" title={activeTab?.cwd}>
@@ -1135,23 +1163,31 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
               </span>
               <span className="text-neutral-200">$</span>
             </div>
-            <input
+            <textarea
               ref={inputRef}
-              type="text"
+              rows={1}
               value={activeTab?.command || ''}
-              onChange={(e) => updateTab(activeTab.id, prev => ({ ...prev, command: e.target.value }))}
+              onChange={(e) => {
+                const normalized = e.target.value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                updateTab(activeTab.id, prev => ({ ...prev, command: normalized }));
+              }}
               onKeyDown={handleKeyDown}
               placeholder={
                 activeTab?.isExecuting
                   ? (isFa ? 'ورودی/پاسخ دستور را تایپ کرده و Enter بزنید...' : 'Type input/response and press Enter...')
-                  : t.cmdPlaceholder
+                  : `${t.cmdPlaceholder} (Shift+Enter = ${isFa ? 'خط جدید' : 'New Line'})`
               }
-              className={`flex-1 min-w-[60px] bg-transparent border-none outline-none font-mono ${FONT_SIZES[fontSizeIdx].classCmd} focus:ring-0 ${
+              className={`flex-1 min-w-[60px] bg-transparent border-none outline-none resize-none leading-relaxed py-0.5 font-mono ${FONT_SIZES[fontSizeIdx].classCmd} focus:ring-0 scrollbar-thin scrollbar-thumb-neutral-700 ${
                 activeTab?.isExecuting ? 'text-amber-300 placeholder-amber-500/70' : 'text-neutral-100 placeholder-neutral-500'
               }`}
               autoFocus
             />
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto select-none">
+            <div className={`flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto select-none ${activeTab?.command?.includes('\n') ? 'pt-0.5' : ''}`}>
+              {activeTab?.command?.includes('\n') && (
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[10px] font-mono shrink-0">
+                  {activeTab.command.split('\n').length} {isFa ? 'خط' : 'lines'}
+                </span>
+              )}
               {activeTab?.isExecuting && (
                 <button
                   type="button"

@@ -1,0 +1,27 @@
+{
+  "uuids": {
+    "phone_id": "9f30ff53-1e5d-47ff-9e4e-9d8fc2549457",
+    "uuid": "5c263916-8377-4607-aeb7-ea39703ea572",
+    "client_session_id": "b944a540-52a1-476d-a31f-4c8daebaa065",
+    "advertising_id": "b2a1b69c-0def-4bd7-b32e-6c153c0a8a5c",
+    "android_device_id": "android-a2a577e544a26e73",
+    "request_id": "20b8c940-44c5-400e-a24e-aea127f5dcea",
+    "tray_session_id": "8eb8e845-6f36-4347-abec-8c5f94002a91"
+  },
+  "device_settings": {
+    "android_version": 34,
+    "android_release": "14",
+    "dpi": "480dpi",
+    "resolution": "1344x2992",
+    "manufacturer": "Google/google",
+    "device": "husky",
+    "model": "Pixel 8 Pro",
+    "cpu": "husky",
+    "app_version": "448.0.0.0.20",
+    "version_code": "1065560286",
+    "bloks_versioning_id": "0bc46a03e177bfc9bc8d611918815acf248fa9c77754d807d6a5951dc9ce9432"
+  },
+  "user_agent": "Instagram 448.0.0.0.20 Android (34/14; 480dpi; 1344x2992; Google/google; Pixel 8 Pro; husky; husky; en_US; 1065560286)",
+  "created_at": "2026-10-02T13:34:43.763842",
+  "app_version_key": "448.0.0.0.20"
+}

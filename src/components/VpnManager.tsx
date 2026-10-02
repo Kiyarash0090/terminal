@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Power, RefreshCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X, Terminal, ChevronDown, ChevronUp, ScrollText, Download, Play, Pause, Search, Video } from 'lucide-react';
+import { Globe, Power, RefreshCw, RotateCw, Plus, Trash2, Check, AlertCircle, Zap, ShieldCheck, MapPin, Server, Activity, ArrowUpRight, Copy, CheckCircle2, RotateCcw, X, Terminal, ChevronDown, ChevronUp, ScrollText, Download, Play, Pause, Search, Video } from 'lucide-react';
 import { Language } from '../types';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { UndoToast } from './UndoToast';
@@ -1065,90 +1065,91 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang }) => {
         </div>
       )}
 
-      {/* Main Status Header Card */}
-      <div className="bg-white dark:bg-[#121214] border border-neutral-200 dark:border-white/10 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-6">
-          <div className="flex items-start gap-2.5 sm:gap-4">
-            <div
-              className={`p-2.5 sm:p-4 rounded-xl sm:rounded-2xl shrink-0 ${
-                status.running
-                  ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 animate-pulse'
-                  : 'bg-neutral-100 dark:bg-white/5 text-neutral-400 border border-neutral-200 dark:border-white/10'
-              }`}
-            >
-              <Globe className="h-5 w-5 sm:h-8 sm:w-8" />
+      {/* ULTRA COMPACT TOP HEADER BANNER (MATCHING INSTAGRAM & YOUTUBE STYLE) */}
+      <div className="p-2 sm:p-2.5 rounded-xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className={`p-1.5 rounded-lg shrink-0 ${
+              status.running
+                ? 'bg-emerald-500/10 text-emerald-500'
+                : 'bg-neutral-100 dark:bg-white/5 text-neutral-400'
+            }`}>
+              <Globe className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
             </div>
-
-            <div className="space-y-1 min-w-0 flex-1">
-              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                <h2 className="text-sm sm:text-xl font-bold tracking-tight text-neutral-900 dark:text-white">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h2 className="text-xs sm:text-sm font-bold text-neutral-900 dark:text-white truncate">
                   {isFa ? 'سامانه تانل و VPN سرور' : 'Server VPN & Tunnel Engine'}
                 </h2>
                 <span
-                  className={`inline-flex items-center gap-1 sm:gap-1.5 px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[10px] sm:text-xs font-semibold ${
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-semibold shrink-0 ${
                     status.running
-                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-rose-500/10 text-rose-500'
                   }`}
                 >
-                  <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${status.running ? 'bg-emerald-500 animate-ping' : 'bg-rose-500'}`} />
-                  {status.running ? (isFa ? 'VPN فعال است' : 'VPN Online') : (isFa ? 'VPN غیرفعال است' : 'VPN Offline')}
+                  <span className={`w-1.5 h-1.5 rounded-full ${status.running ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                  <span>{status.running ? (isFa ? 'VPN آنلاین' : 'VPN Online') : (isFa ? 'خاموش' : 'Offline')}</span>
                 </span>
+                {status.activeName && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-mono text-[9px] font-bold shrink-0 max-w-[110px] sm:max-w-none truncate">
+                    {status.activeName}
+                  </span>
+                )}
               </div>
-
-              <p className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400">
-                {isFa
-                  ? 'تانل کردن کل ترافیک سرور، پشتیبانی از vmess، vless، trojan، reality و xhttp'
-                  : 'Full server routing via Xray-core with support for VLESS, VMess, Trojan, REALITY & XHTTP'}
-              </p>
-
-              <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px] sm:text-xs font-mono pt-1.5 sm:pt-2 text-neutral-600 dark:text-neutral-400">
-                <span className="flex items-center gap-1 sm:gap-1.5 bg-neutral-100 dark:bg-white/5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-neutral-200 dark:border-white/10">
-                  <Server className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-blue-500" />
-                  {isFa ? 'کانفیگ فعال:' : 'Active:'} <strong className="text-neutral-900 dark:text-white truncate max-w-[120px] sm:max-w-none">{status.activeName || (isFa ? 'انتخاب نشده' : 'None')}</strong>
+              <div className="flex items-center gap-1.5 text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
+                <span>
+                  {isFa ? `پروکسی: ${status.socksProxy}` : `Proxy: ${status.socksProxy}`}
                 </span>
-
-                <span className="flex items-center gap-1 sm:gap-1.5 bg-neutral-100 dark:bg-white/5 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg border border-neutral-200 dark:border-white/10">
-                  <ShieldCheck className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-500" />
-                  {isFa ? 'پروکسی:' : 'Proxy:'} <strong className="text-neutral-900 dark:text-white">{status.socksProxy}</strong>
-                  <button
-                    onClick={() => handleCopyProxy(status.socksProxy)}
-                    className="hover:text-blue-500 ml-1 cursor-pointer"
-                    title={isFa ? 'کپی آدرس پروکسی' : 'Copy Proxy'}
-                  >
-                    {copiedProxy ? <Check className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-emerald-500" /> : <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyProxy(status.socksProxy)}
+                  className="hover:text-blue-500 cursor-pointer"
+                  title={isFa ? 'کپی آدرس پروکسی' : 'Copy Proxy'}
+                >
+                  {copiedProxy ? <Check className="h-2.5 w-2.5 text-emerald-500 inline" /> : <Copy className="h-2.5 w-2.5 inline" />}
+                </button>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums">
+                  {isFa ? `${configs.length} کانفیگ` : `${configs.length} configs`}
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 self-stretch md:self-auto justify-end">
+          {/* Action Buttons (Compact on Mobile) */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <button
-              onClick={fetchStatus}
-              className="p-2 sm:p-3 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-white/5 rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 transition cursor-pointer"
-              title={isFa ? 'بروزرسانی وضعیت' : 'Refresh Status'}
+              type="button"
+              onClick={handleToggleVpn}
+              disabled={actionLoading}
+              className={`p-1.5 sm:px-2.5 sm:py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shadow-sm cursor-pointer disabled:opacity-50 whitespace-nowrap ${
+                status.running
+                  ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+              }`}
+              title={status.running ? (isFa ? 'خاموش کردن VPN' : 'Disconnect VPN') : (isFa ? 'روشن کردن VPN' : 'Connect VPN')}
             >
-              <RefreshCw className="h-4 w-4 sm:h-5 sm:w-5" />
+              {actionLoading ? (
+                <RotateCw className="h-3 w-3 sm:h-3.5 sm:w-3.5 animate-spin" />
+              ) : (
+                <Power className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                {status.running
+                  ? (isFa ? 'خاموش کردن' : 'Disconnect')
+                  : (isFa ? 'روشن کردن' : 'Connect')}
+              </span>
             </button>
 
             <button
-              onClick={handleToggleVpn}
-              disabled={actionLoading}
-              className={`flex-1 md:flex-none flex items-center justify-center gap-2 sm:gap-3 px-3.5 py-2 sm:px-6 sm:py-3.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold transition shadow-md cursor-pointer ${
-                status.running
-                  ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-              } disabled:opacity-50`}
+              type="button"
+              onClick={fetchStatus}
+              className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-white/10 text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
+              title={isFa ? 'بروزرسانی وضعیت' : 'Refresh Status'}
             >
-              <Power className="h-4 w-4 sm:h-5 sm:w-5" />
-              <span>
-                {actionLoading
-                  ? (isFa ? 'در حال پردازش...' : 'Processing...')
-                  : status.running
-                  ? (isFa ? 'خاموش کردن VPN' : 'Disconnect VPN')
-                  : (isFa ? 'روشن کردن VPN' : 'Connect VPN')}
-              </span>
+              <RefreshCw className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+              <span className="hidden sm:inline">{isFa ? 'بروزرسانی' : 'Refresh'}</span>
             </button>
           </div>
         </div>

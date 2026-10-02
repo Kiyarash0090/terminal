@@ -100,6 +100,13 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
   const [items, setItems] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [showSystemFiles, setShowSystemFiles] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('filemanager_show_system_files') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const filteredItems = React.useMemo(() => {
     if (!searchTerm.trim()) return items;
@@ -540,15 +547,16 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
     }
   };
 
-  const fetchFiles = async (pathUrl?: string) => {
+  const fetchFiles = async (pathUrl?: string, overrideShowSystem?: boolean) => {
     if (!token) {
       setLoading(false);
       return;
     }
     setLoading(true);
     const target = pathUrl || currentPath;
+    const isSys = overrideShowSystem !== undefined ? overrideShowSystem : showSystemFiles;
     try {
-      const res = await fetch(`/api/files/list?path=${encodeURIComponent(target)}&_t=${Date.now()}`, {
+      const res = await fetch(`/api/files/list?path=${encodeURIComponent(target)}&showSystem=${isSys ? 'true' : 'false'}&_t=${Date.now()}`, {
         headers: { 
           'x-auth-token': token,
           'Cache-Control': 'no-cache',
@@ -566,6 +574,15 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleShowSystemFiles = () => {
+    const nextVal = !showSystemFiles;
+    setShowSystemFiles(nextVal);
+    try {
+      localStorage.setItem('filemanager_show_system_files', String(nextVal));
+    } catch {}
+    fetchFiles(currentPath, nextVal);
   };
 
   useEffect(() => {
@@ -1131,6 +1148,27 @@ export const FileManager: React.FC<FileManagerProps> = ({ token, lang }) => {
           >
             <FilePlus className="h-3.5 w-3.5 text-blue-500" />
             <span>{t.newFile}</span>
+          </button>
+
+          <button
+            onClick={toggleShowSystemFiles}
+            className={`px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-medium border transition flex items-center gap-1 sm:gap-1.5 cursor-pointer ${
+              showSystemFiles
+                ? 'border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
+                : 'border-neutral-300 dark:border-white/10 bg-white dark:bg-[#121214] hover:bg-neutral-100 dark:hover:bg-white/5 text-neutral-600 dark:text-neutral-400'
+            }`}
+            title={
+              showSystemFiles
+                ? (lang === 'fa' ? 'پنهان‌سازی فایل‌های سیستمی برنامه' : 'Hide app system files')
+                : (lang === 'fa' ? 'نمایش فایل‌های سیستمی برنامه' : 'Show app system files')
+            }
+          >
+            {showSystemFiles ? <Eye className="h-3.5 w-3.5 text-amber-500" /> : <EyeOff className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">
+              {showSystemFiles
+                ? (lang === 'fa' ? 'فایل‌های سیستمی (روشن)' : 'System Files (On)')
+                : (lang === 'fa' ? 'فایل‌های سیستمی' : 'System Files')}
+            </span>
           </button>
 
           <button
