@@ -130,10 +130,10 @@ def get_auth_token():
         if GLOBAL_CONFIG_PATH.exists():
             with open(GLOBAL_CONFIG_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("authToken", "serverdash_secret_token_2026_x98")
+                return data.get("authToken", "")
     except Exception as e:
         logger.error(f"Error reading auth token: {e}")
-    return "serverdash_secret_token_2026_x98"
+    return ""
 
 # Express API Helper
 async def express_api(method: str, path: str, data: dict = None):
