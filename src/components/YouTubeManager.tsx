@@ -157,6 +157,10 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
     downloadUrl: string;
   } | null>(null);
 
+  // Main Tabs: 'downloader' | 'saved' | 'settings'
+  const [mainTab, setMainTab] = useState<'downloader' | 'saved' | 'settings'>('downloader');
+  const [savedSearch, setSavedSearch] = useState('');
+
   // Downloads State
   const [downloads, setDownloads] = useState<YouTubeDownloadJob[]>([]);
   const [activeDownloadId, setActiveDownloadId] = useState<string | null>(null);
@@ -560,12 +564,12 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-500 shrink-0">
-              <Youtube className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
+              <Key className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <h2 className="text-xs sm:text-sm font-bold text-neutral-900 dark:text-white truncate">
-                  {isFa ? 'مدیریت و دانلود ویدیوهای یوتیوب' : 'YouTube Hub & Downloader'}
+                  {isFa ? 'سرور تولید PO-Token یوتیوب' : 'YouTube PO-Token Server'}
                 </h2>
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9px] font-semibold shrink-0 ${
                   potStatus?.isRunning 
@@ -573,7 +577,7 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
                     : 'bg-neutral-500/10 text-neutral-400'
                 }`}>
                   <span className={`h-1.5 w-1.5 rounded-full ${potStatus?.isRunning ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-400'}`} />
-                  <span>{potStatus?.isRunning ? (isFa ? 'توکن آنلاین' : 'Online') : (isFa ? 'خاموش' : 'Offline')}</span>
+                  <span>{potStatus?.isRunning ? (isFa ? 'سرور PO آنلاین' : 'PO Server Online') : (isFa ? 'خاموش' : 'PO Server Offline')}</span>
                 </span>
                 {vpnStatus?.vpnActive && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[9px] font-semibold shrink-0">
@@ -583,14 +587,14 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
                 )}
               </div>
               <div className="flex items-center gap-1.5 text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
+                <span>
+                  {isFa ? `پورت سرویس: ${potStatus?.port || 4416}` : `Service Port: ${potStatus?.port || 4416}`}
+                </span>
+                <span aria-hidden="true">·</span>
                 <span className={vpnStatus?.vpnActive ? 'text-emerald-600 dark:text-emerald-400 font-medium' : ''}>
                   {vpnStatus?.vpnActive
                     ? (isFa ? 'پروکسی ۱۰۸۰۹' : 'Proxy 10809')
                     : (isFa ? 'اتصال مستقیم' : 'Direct')}
-                </span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono tabular-nums">
-                  {isFa ? `${downloads.length} فایل ذخیره` : `${downloads.length} files`}
                 </span>
               </div>
             </div>
@@ -604,7 +608,7 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
                 onClick={() => handleTogglePot(false)}
                 disabled={potToggling}
                 className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-[11px] font-bold flex items-center gap-1 transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                title={isFa ? 'خاموش کردن سرور توکن' : 'Stop Token Server'}
+                title={isFa ? 'خاموش کردن سرور PO-Token' : 'Stop PO-Token Server'}
               >
                 {potToggling ? <RotateCw className="h-3 w-3 animate-spin" /> : <PowerOff className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
                 <span className="hidden sm:inline">{isFa ? 'خاموش کردن' : 'Stop'}</span>
@@ -615,7 +619,7 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
                 onClick={() => handleTogglePot(true)}
                 disabled={potToggling}
                 className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1 transition shadow-sm shadow-emerald-600/20 disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                title={isFa ? 'روشن کردن سرور توکن' : 'Start Token Server'}
+                title={isFa ? 'روشن کردن سرور PO-Token' : 'Start PO-Token Server'}
               >
                 {potToggling ? <RotateCw className="h-3 w-3 animate-spin" /> : <Power className="h-3 w-3 sm:h-3.5 sm:w-3.5" />}
                 <span className="hidden sm:inline">{isFa ? 'روشن کردن' : 'Start'}</span>
@@ -628,7 +632,7 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
                 onClick={handleRestartPot}
                 disabled={potRestarting}
                 className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-white/10 text-[11px] font-semibold flex items-center gap-1 transition disabled:opacity-50 cursor-pointer whitespace-nowrap"
-                title={isFa ? 'راه‌اندازی مجدد سرویس توکن' : 'Restart token service'}
+                title={isFa ? 'راه‌اندازی مجدد سرویس PO-Token' : 'Restart PO-Token Service'}
               >
                 <RotateCw className={`h-3 w-3 sm:h-3.5 sm:w-3.5 ${potRestarting ? 'animate-spin text-amber-500' : ''}`} />
                 <span className="hidden sm:inline">{isFa ? 'راه‌اندازی مجدد' : 'Restart'}</span>
@@ -639,7 +643,7 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
               type="button"
               onClick={() => { fetchVpnStatus(); fetchPotStatus(); fetchDownloads(); }}
               className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-white/10 text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer whitespace-nowrap"
-              title={isFa ? 'بروزرسانی وضعیت' : 'Refresh Status'}
+              title={isFa ? 'بروزرسانی وضعیت سرور PO' : 'Refresh PO Server Status'}
             >
               <RefreshCw className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               <span className="hidden sm:inline">{isFa ? 'بروزرسانی' : 'Refresh'}</span>
@@ -648,21 +652,121 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
         </div>
       </div>
 
-      {/* SECTION 1: VIDEO INFO EXTRACTOR & DOWNLOADER */}
-      <div className="p-3 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-3 sm:space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 pb-2 border-b border-neutral-200/80 dark:border-white/10">
+      {/* MAIN UNIFIED PANEL: 3 SEGMENTED TABS (MATCHING INSTAGRAM HUB STYLE) */}
+      <div className="p-4 sm:p-5 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-sm space-y-4">
+        {/* Panel Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-200 dark:border-white/10">
           <div>
-            <h3 className="text-xs sm:text-base font-bold text-neutral-900 dark:text-white flex items-center gap-1.5 sm:gap-2">
-              <Film className="h-4 w-4 sm:h-5 sm:w-5 text-rose-500" />
-              <span>{isFa ? 'استخراج اطلاعات و دانلود ویدیوهای یوتیوب' : 'Extract Video Info & Download'}</span>
+            <h3 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+              {mainTab === 'downloader' ? (
+                <>
+                  <Download className="h-4.5 w-4.5 text-rose-500 shrink-0" />
+                  <span>{isFa ? 'دانلود ویدیو و استخراج کیفیت‌های یوتیوب' : 'YouTube Video Downloader & Formats'}</span>
+                </>
+              ) : mainTab === 'saved' ? (
+                <>
+                  <FolderDown className="h-4.5 w-4.5 text-rose-500 shrink-0" />
+                  <span>{isFa ? 'فایل‌های دانلودشده و آرشیو سرور' : 'Saved Media & Server Archive'}</span>
+                </>
+              ) : (
+                <>
+                  <Key className="h-4.5 w-4.5 text-rose-500 shrink-0" />
+                  <span>{isFa ? 'سرویس و تولیدکننده توکن PO یوتیوب' : 'YouTube PO-Token Generator & Service'}</span>
+                </>
+              )}
             </h3>
-            <p className="text-[10px] sm:text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-              {isFa 
-                ? 'آدرس ویدیوی مورد نظر را وارد کرده تا مشخصات و کیفیت‌های آن استخراج شوند.'
-                : 'Enter a YouTube video URL to inspect thumbnails, metadata, and available quality formats.'}
+            <p className="text-[11px] sm:text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+              {mainTab === 'downloader'
+                ? (isFa
+                    ? 'دانلود آسان ویدیو، شورتس، موزیک MP3 و زیرنویس‌های تمام زبان‌ها با انجین‌های yt-dlp و pytubefix'
+                    : 'Download YouTube videos, shorts, audio, and multi-language subtitles with yt-dlp & pytubefix')
+                : mainTab === 'saved'
+                ? (isFa
+                    ? 'مدیریت و دریافت مستقیم فایل‌های ذخیره‌شده در دیسک سرور و پایش وضعیت دانلودهای جاری'
+                    : 'Manage, stream and download server-saved media files directly to your device')
+                : (isFa
+                    ? 'بررسی وضعیت سرور BG-Utils، تولید دستی توکن‌های PO و نمونه کدهای پایتون و ترمینال'
+                    : 'PO Token server engine, real-time testing, visitor data generator & integration snippets')}
             </p>
           </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {mainTab !== 'downloader' && (
+              <button
+                type="button"
+                onClick={() => setMainTab('downloader')}
+                className="px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>{isFa ? 'بخش دانلود' : 'Downloader'}</span>
+              </button>
+            )}
+            {mainTab !== 'saved' && downloads.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setMainTab('saved')}
+                className="px-2.5 py-1.5 rounded-xl bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-white/10 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <FolderDown className="h-3.5 w-3.5 text-emerald-500" />
+                <span>{isFa ? `فایل‌ها (${downloads.length})` : `Files (${downloads.length})`}</span>
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* 3 Main Tabs Segmented Selector */}
+        <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-neutral-100 dark:bg-white/5 border border-neutral-200 dark:border-white/10">
+          <button
+            type="button"
+            onClick={() => setMainTab('downloader')}
+            className={`py-1.5 sm:py-2 px-1.5 sm:px-3 rounded-lg text-[10px] sm:text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 ${
+              mainTab === 'downloader'
+                ? 'bg-white dark:bg-neutral-800 text-rose-600 dark:text-rose-400 shadow-sm'
+                : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+            }`}
+          >
+            <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+            <span className="truncate">{isFa ? 'دانلودر و کیفیت‌ها' : 'Downloader'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainTab('saved')}
+            className={`py-1.5 sm:py-2 px-1.5 sm:px-3 rounded-lg text-[10px] sm:text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 ${
+              mainTab === 'saved'
+                ? 'bg-white dark:bg-neutral-800 text-rose-600 dark:text-rose-400 shadow-sm'
+                : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+            }`}
+          >
+            <FolderDown className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+            <span className="truncate">{isFa ? 'فایل‌های ذخیره‌شده' : 'Saved Files'}</span>
+            {downloads.length > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ${
+                mainTab === 'saved' ? 'bg-rose-500/20 text-rose-500' : 'bg-neutral-200 dark:bg-white/10 text-neutral-600 dark:text-neutral-300'
+              }`}>
+                {downloads.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainTab('settings')}
+            className={`py-1.5 sm:py-2 px-1.5 sm:px-3 rounded-lg text-[10px] sm:text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 sm:gap-1.5 ${
+              mainTab === 'settings'
+                ? 'bg-white dark:bg-neutral-800 text-rose-600 dark:text-rose-400 shadow-sm'
+                : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+            }`}
+          >
+            <Key className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+            <span className="truncate">{isFa ? 'تنظیمات و سرور PO' : 'PO-Token Engine'}</span>
+            <span className={`h-1.5 w-1.5 rounded-full ${potStatus?.isRunning ? 'bg-emerald-500' : 'bg-neutral-400'}`} />
+          </button>
+        </div>
+
+        {/* TAB 1: DOWNLOADER & FORMATS */}
+        {mainTab === 'downloader' && (
+          <div className="space-y-4 pt-1">
 
         {/* Library Engine Selector (yt-dlp vs pytubefix - SIDE BY SIDE / روبروی هم) */}
         <div className="p-2 sm:p-3 rounded-xl bg-neutral-50 dark:bg-white/[0.02] border border-neutral-200 dark:border-white/5 space-y-1.5 sm:space-y-2">
@@ -1460,87 +1564,141 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
             )}
           </div>
         )}
+      </div>
+    )}
 
-        {/* RECENT DOWNLOADS LIST */}
-        {downloads.length > 0 && (
-          <div className="space-y-3 pt-4 border-t border-neutral-200 dark:border-white/10">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-neutral-700 dark:text-neutral-300 flex items-center gap-2">
-                <FolderDown className="h-4 w-4 text-emerald-500" />
-                <span>{isFa ? 'فایل‌های دانلود شده اخیر در سرور' : 'Recent Downloads on Server'}</span>
-                <span className="px-2 py-0.5 rounded-full bg-neutral-200 dark:bg-white/10 text-[10px] text-neutral-600 dark:text-neutral-400">
-                  {downloads.length}
-                </span>
-              </h4>
-              <button
-                onClick={fetchDownloads}
-                className="text-xs text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition flex items-center gap-1"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span>{isFa ? 'بروزرسانی لیست' : 'Refresh'}</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto">
-              {downloads.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3 rounded-xl border border-neutral-200 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-neutral-900 dark:text-white truncate">
-                      {item.title}
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 flex-wrap">
-                      <span className="text-rose-500 font-semibold">{item.formatLabel}</span>
-                      <span className="px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-white/10 text-neutral-700 dark:text-neutral-300 font-mono text-[10px]">
-                        {item.engine || 'ytdlp'}
-                      </span>
-                      {item.vpnUsed && (
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-sans text-[10px] flex items-center gap-1">
-                          <Shield className="h-2.5 w-2.5" />
-                          <span>VPN</span>
-                        </span>
-                      )}
-                      {item.totalSize && <span>• {item.totalSize}</span>}
-                      <span>• {new Date(item.createdAt).toLocaleTimeString()}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {item.status === 'completed' && (
-                      <a
-                        href={`/api/youtube/download/file/${item.id}?token=${getEffectiveToken()}`}
-                        download={item.fileName}
-                        className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 transition cursor-pointer"
-                        title={isFa ? 'دریافت فایل' : 'Download file'}
-                      >
-                        <ArrowDownToLine className="h-4 w-4" />
-                      </a>
-                    )}
+        {/* TAB 2: SAVED DOWNLOADS & MEDIA ARCHIVE */}
+        {mainTab === 'saved' && (
+          <div className="space-y-4 pt-1">
+            {/* Search & Actions Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-neutral-200 dark:border-white/10">
+              <div className="flex items-center gap-2 flex-1">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="h-4 w-4 absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                  <input
+                    type="text"
+                    value={savedSearch}
+                    onChange={(e) => setSavedSearch(e.target.value)}
+                    placeholder={isFa ? 'جستجو در نام ویدیو یا کیفیت...' : 'Search downloaded files...'}
+                    className="w-full pr-9 pl-3 py-1.5 rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-50 dark:bg-neutral-900/80 text-xs text-neutral-900 dark:text-white placeholder:text-neutral-400"
+                  />
+                  {savedSearch && (
                     <button
-                      onClick={() => handleDeleteDownload(item.id)}
-                      className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 transition cursor-pointer"
-                      title={isFa ? 'حذف فایل' : 'Delete file'}
+                      onClick={() => setSavedSearch('')}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 cursor-pointer"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
-                  </div>
+                  )}
                 </div>
-              ))}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={fetchDownloads}
+                  className="px-3 py-1.5 rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>{isFa ? 'بروزرسانی' : 'Refresh'}</span>
+                </button>
+              </div>
             </div>
+
+            {/* Downloads List */}
+            {downloads.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {downloads
+                  .filter(item => {
+                    if (!savedSearch.trim()) return true;
+                    const q = savedSearch.toLowerCase();
+                    return item.title.toLowerCase().includes(q) || (item.formatLabel && item.formatLabel.toLowerCase().includes(q));
+                  })
+                  .map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-3.5 rounded-2xl border border-neutral-200 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] flex items-center justify-between gap-3 text-xs hover:border-rose-500/30 transition shadow-2xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-neutral-900 dark:text-white truncate">
+                          {item.title}
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 flex-wrap">
+                          <span className="text-rose-500 font-semibold">{item.formatLabel}</span>
+                          <span className="px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-white/10 text-neutral-700 dark:text-neutral-300 font-mono text-[10px]">
+                            {item.engine || 'ytdlp'}
+                          </span>
+                          {item.vpnUsed && (
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-sans text-[10px] flex items-center gap-1">
+                              <Shield className="h-2.5 w-2.5" />
+                              <span>VPN</span>
+                            </span>
+                          )}
+                          {item.totalSize && <span>• {item.totalSize}</span>}
+                          <span>• {new Date(item.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {item.status === 'completed' && (
+                          <a
+                            href={`/api/youtube/download/file/${item.id}?token=${getEffectiveToken()}`}
+                            download={item.fileName}
+                            className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 transition cursor-pointer"
+                            title={isFa ? 'دریافت مستقیم فایل' : 'Download file'}
+                          >
+                            <ArrowDownToLine className="h-4 w-4" />
+                          </a>
+                        )}
+                        <button
+                          onClick={() => handleDeleteDownload(item.id)}
+                          className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 transition cursor-pointer"
+                          title={isFa ? 'حذف فایل' : 'Delete file'}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div className="py-12 text-center rounded-2xl border border-dashed border-neutral-200 dark:border-white/10 bg-neutral-50/50 dark:bg-white/[0.01] space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto">
+                  <FolderDown className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-neutral-900 dark:text-white">
+                    {isFa ? 'هنوز هیچ فایلی دانلود نشده است' : 'No downloaded files yet'}
+                  </h4>
+                  <p className="text-xs text-neutral-400 mt-1 max-w-sm mx-auto">
+                    {isFa
+                      ? 'ویدیوها و فایل‌های صوتی دانلودشده در این قسمت ذخیره و آماده دریافت خواهند بود.'
+                      : 'Downloaded media files will be archived here for direct device download.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMainTab('downloader')}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-md shadow-rose-600/20 cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isFa ? 'شروع اولین دانلود' : 'Start First Download'}</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
-      </div>
 
-      {/* SECTION 2: PO TOKEN GENERATOR & API TESTER */}
-      <div className="p-5 sm:p-6 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-xl space-y-5">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-neutral-200/80 dark:border-white/10">
-          <div>
-            <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
-              <Key className="h-5 w-5 text-amber-500" />
-              <span>{isFa ? 'تولیدکننده توکن PO (PO Token Generator)' : 'PO Token Generator'}</span>
-            </h3>
+        {/* TAB 3: PO-TOKEN ENGINE & SETTINGS */}
+        {mainTab === 'settings' && (
+          <div className="space-y-4 pt-1">
+            <div className="p-4 sm:p-5 rounded-xl border border-neutral-200 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-neutral-200/80 dark:border-white/10">
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                    <Key className="h-5 w-5 text-amber-500" />
+                    <span>{isFa ? 'تولیدکننده توکن PO (PO Token Generator)' : 'PO Token Generator'}</span>
+                  </h3>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
               {isFa ? 'نوع ابزار مقصد خود را انتخاب کرده و توکن تازه تولید کنید.' : 'Select your target framework and generate a fresh PO Token.'}
             </p>
@@ -1743,41 +1901,44 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
         )}
       </div>
 
-      {/* Logs and Diagnostics Panel */}
-      <div className="p-5 sm:p-6 rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-xl space-y-4">
-        <div 
-          onClick={() => setShowLogs(!showLogs)}
-          className="flex items-center justify-between cursor-pointer select-none"
-        >
-          <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-sky-500" />
-            <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-              {isFa ? 'لاگ‌های زنده سرویس یوتیوب و PO Token' : 'YouTube & PO Token Live Logs'}
-            </h3>
-            {potStatus?.logs && (
-              <span className="text-xs bg-neutral-100 dark:bg-white/10 px-2 py-0.5 rounded-full text-neutral-600 dark:text-neutral-400">
-                {potStatus.logs.length}
-              </span>
-            )}
-          </div>
-          <button className="text-neutral-400 hover:text-white transition">
-            {showLogs ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
-          </button>
-        </div>
-
-        {showLogs && (
-          <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 text-xs font-mono text-neutral-300 max-h-60 overflow-y-auto dir-ltr text-left space-y-1">
-            {potStatus?.logs && potStatus.logs.length > 0 ? (
-              potStatus.logs.map((line, idx) => (
-                <div key={idx} className="leading-relaxed hover:bg-white/5 px-1.5 py-0.5 rounded transition">
-                  {line}
+            {/* Logs and Diagnostics Panel */}
+            <div className="p-4 sm:p-5 rounded-xl border border-neutral-200 dark:border-white/5 bg-neutral-50/50 dark:bg-white/[0.02] space-y-3">
+              <div 
+                onClick={() => setShowLogs(!showLogs)}
+                className="flex items-center justify-between cursor-pointer select-none"
+              >
+                <div className="flex items-center gap-2">
+                  <Activity className="h-4.5 w-4.5 text-sky-500" />
+                  <h4 className="text-xs font-bold text-neutral-900 dark:text-white">
+                    {isFa ? 'لاگ‌های زنده سرور PO Token' : 'PO Token Live Logs'}
+                  </h4>
+                  {potStatus?.logs && (
+                    <span className="text-[10px] bg-neutral-200 dark:bg-white/10 px-2 py-0.2 rounded-full text-neutral-600 dark:text-neutral-400 font-mono">
+                      {potStatus.logs.length}
+                    </span>
+                  )}
                 </div>
-              ))
-            ) : (
-              <div className="text-neutral-500 italic">
-                {isFa ? 'هنوز هیچ لاگی ثبت نشده است.' : 'No logs recorded yet.'}
+                <button className="text-neutral-400 hover:text-white transition">
+                  {showLogs ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
               </div>
-            )}
+
+              {showLogs && (
+                <div className="bg-neutral-950 p-3.5 rounded-xl border border-neutral-800 text-xs font-mono text-neutral-300 max-h-56 overflow-y-auto dir-ltr text-left space-y-0.5">
+                  {potStatus?.logs && potStatus.logs.length > 0 ? (
+                    potStatus.logs.map((line, idx) => (
+                      <div key={idx} className="leading-relaxed hover:bg-white/5 px-1 py-0.5 rounded transition">
+                        {line}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-neutral-500 italic">
+                      {isFa ? 'هنوز هیچ لاگی ثبت نشده است.' : 'No logs recorded yet.'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

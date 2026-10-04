@@ -10,9 +10,10 @@ import { DeleteConfirmModal } from './DeleteConfirmModal';
 interface ProcessManagerProps {
   token: string | null;
   lang: Language;
+  isActive?: boolean;
 }
 
-export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) => {
+export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang, isActive = true }) => {
   const t = translations[lang];
   const [tasks, setTasks] = useState<BackgroundTask[]>([]);
   const [sysProcesses, setSysProcesses] = useState<SystemProcess[]>([]);
@@ -95,10 +96,15 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
   };
 
   useEffect(() => {
+    if (!token || !isActive) return;
     fetchProcesses();
-    const interval = setInterval(fetchProcesses, 2500);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchProcesses();
+      }
+    }, 4500);
     return () => clearInterval(interval);
-  }, [token]);
+  }, [token, isActive]);
 
   // Live log polling when log modal is open for a running task
   useEffect(() => {
@@ -569,35 +575,35 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
 
       {/* Live Logs View Modal */}
       {activeTaskLogs && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-neutral-950 text-neutral-100 rounded-2xl border border-neutral-800 w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs">
+        <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 rounded-2xl border border-neutral-200 dark:border-neutral-800 w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl overflow-hidden font-mono text-xs">
             {/* Modal Header */}
-            <div className="p-4 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between gap-3 shrink-0">
+            <div className="p-4 bg-neutral-100 dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-2 min-w-0">
-                <Terminal className="h-5 w-5 text-emerald-400 shrink-0" />
+                <Terminal className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-neutral-100 truncate">{activeTaskLogs.name}</span>
+                    <span className="font-bold text-sm text-neutral-900 dark:text-neutral-100 truncate">{activeTaskLogs.name}</span>
                     {activeTaskLogs.isRunning ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold animate-pulse">
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded-full font-bold animate-pulse">
                         <Radio className="h-3 w-3" /> LIVE OUTPUT
                       </span>
                     ) : (
-                      <span className="text-[10px] bg-neutral-800 text-neutral-400 px-2 py-0.5 rounded-full">
+                      <span className="text-[10px] bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 px-2 py-0.5 rounded-full font-semibold">
                         FINISHED
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-neutral-400 truncate mt-0.5">{activeTaskLogs.command}</p>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate mt-0.5">{activeTaskLogs.command}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={handleCopyLogs}
-                  className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition text-xs font-sans flex items-center gap-1.5 cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg bg-white dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-200 border border-neutral-200 dark:border-transparent transition text-xs font-sans flex items-center gap-1.5 cursor-pointer shadow-xs dark:shadow-none"
                 >
-                  {copiedLogs ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedLogs ? <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
                   <span>کپی لاگ</span>
                 </button>
 
@@ -607,7 +613,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
                       handleKillTask(activeTaskLogs.id);
                       setActiveTaskLogs(prev => prev ? { ...prev, isRunning: false } : null);
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white transition text-xs font-sans font-bold flex items-center gap-1.5 cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-rose-500/15 dark:bg-rose-600/20 text-rose-600 dark:text-rose-400 hover:bg-rose-600 hover:text-white transition text-xs font-sans font-bold flex items-center gap-1.5 cursor-pointer"
                   >
                     <StopCircle className="h-3.5 w-3.5" />
                     <span>توقف اسکریپت</span>
@@ -616,7 +622,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
 
                 <button
                   onClick={() => setActiveTaskLogs(null)}
-                  className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition cursor-pointer"
+                  className="p-1.5 rounded-lg bg-white dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-white border border-neutral-200 dark:border-transparent transition cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -628,15 +634,15 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
               <div
                 ref={modalLogContainerRef}
                 onScroll={handleLogScroll}
-                className="flex-1 overflow-y-auto p-4 bg-[#0d0d0e] leading-relaxed whitespace-pre-wrap text-neutral-200 text-xs font-mono space-y-1 scrollbar-thin scrollbar-thumb-neutral-800 select-text cursor-text selection:bg-blue-600/40 selection:text-white"
+                className="flex-1 overflow-y-auto p-4 bg-neutral-50 dark:bg-[#0d0d0e] leading-relaxed whitespace-pre-wrap text-neutral-800 dark:text-neutral-200 text-xs font-mono space-y-1 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-800 select-text cursor-text selection:bg-blue-600/30 dark:selection:bg-blue-600/40 selection:text-neutral-900 dark:selection:text-white"
               >
                 {activeTaskLogs.logs.length === 0 ? (
-                  <div className="text-neutral-500 py-12 text-center italic select-none">
+                  <div className="text-neutral-400 dark:text-neutral-500 py-12 text-center italic select-none">
                     در حال انتظار برای خروجی اسکریپت...
                   </div>
                 ) : (
                   activeTaskLogs.logs.map((logLine, idx) => (
-                    <div key={idx} className="break-words select-text hover:bg-white/5 px-1 py-0.5 rounded transition">
+                    <div key={idx} className="break-words select-text hover:bg-neutral-200/50 dark:hover:bg-white/5 px-1 py-0.5 rounded transition">
                       {logLine}
                     </div>
                   ))
@@ -660,13 +666,13 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
             </div>
 
             {/* Modal Footer */}
-            <div className="p-3 bg-neutral-900 border-t border-neutral-800 text-[11px] text-neutral-400 flex items-center justify-between font-sans">
+            <div className="p-3 bg-neutral-100 dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 text-[11px] text-neutral-500 dark:text-neutral-400 flex items-center justify-between font-sans">
               <span className="flex items-center gap-1.5">
                 {activeTaskLogs.isRunning ? (
                   autoScrollLogs ? (
-                    <span className="text-emerald-400">🟢 اسکرول خودکار زنده فعال است</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">🟢 اسکرول خودکار زنده فعال است</span>
                   ) : (
-                    <span className="text-amber-400">⏸️ اسکرول خودکار غیرفعال شد (مکث برای بررسی لاگ‌های قدیمی)</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-medium">⏸️ اسکرول خودکار غیرفعال شد (مکث برای بررسی لاگ‌های قدیمی)</span>
                   )
                 ) : (
                   'پایان اجرای اسکریپت'
@@ -674,7 +680,7 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang }) =
               </span>
               <button
                 onClick={() => setActiveTaskLogs(null)}
-                className="px-4 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold cursor-pointer"
+                className="px-4 py-1 rounded bg-white dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-transparent font-semibold cursor-pointer transition shadow-xs dark:shadow-none"
               >
                 بستن
               </button>

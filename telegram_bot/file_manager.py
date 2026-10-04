@@ -137,7 +137,7 @@ class FileManager:
                 # Frontend & app source code
                 'src', 'assets', 'public', 'index.html', 'metadata.json',
                 # Python backend & internal helper scripts
-                'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot',
+                'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot', 'scripts',
                 'get-pip.py', 'requirements.txt', '__pycache__',
                 # Internal configs, servers, and sessions
                 'server.ts', 'server.ts.orig', 'Dockerfile', 'nixpacks.toml', 'railway.json', 'README.md', 'proxychains.conf',
@@ -238,10 +238,9 @@ class FileManager:
         # Close the directional embedding and the code block
         result += "\u202C\n```"
         
-        # Add total recursive size for all files in the current directory tree
+        # Add total size for visible non-system files in the current directory tree
         total_size = self.get_directory_size(directory)
-        if total_size > 0:
-            result += f"\n📊 حجم کل فایل‌ها و پوشه‌ها: `{format_size(total_size)}`"
+        result += f"\n📊 حجم کل فایل‌ها و پوشه‌ها: `{format_size(total_size)}`"
         
         result += f"\n\n💡 برای دانلود یا حذف فایل‌ها از دکمه‌های بالای صفحه استفاده کنید، و برای ورود به پوشه روی نام آن کلیک کنید."
         
@@ -337,14 +336,53 @@ class FileManager:
             return False, f"❌ خطا: {str(e)}"
     
     def get_directory_size(self, directory: Optional[Path] = None) -> int:
-        """محاسبه کل سایز پوشه"""
+        """محاسبه کل سایز پوشه (فقط برای فایل‌ها و پوشه‌های غیر پنهان و غیر سیستمی)"""
         if directory is None:
             directory = self.current_dir
         
+        directory = Path(directory).resolve()
+        base_resolved = self.base_dir.resolve()
+
+        app_system_files = {
+            # Git and source control
+            '.git', '.gitignore',
+            # Env and keys
+            '.env', '.env.example',
+            # Node and builds
+            'node_modules', 'dist', 'bun.lock', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts',
+            # Frontend & app source code
+            'src', 'assets', 'public', 'index.html', 'metadata.json',
+            # Python backend & internal helper scripts
+            'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot', 'scripts',
+            'get-pip.py', 'requirements.txt', '__pycache__',
+            # Internal configs, servers, and sessions
+            'server.ts', 'server.ts.orig', 'Dockerfile', 'nixpacks.toml', 'railway.json', 'README.md', 'proxychains.conf',
+            'cookies.txt', 'instagram_accounts', 'instagram_page_info.json', 'instagram_session.json',
+            '.serverdash_config.json', '.serverdash_metrics.json', '.pot_config.json', '.terminal_cwd',
+            '.trash_map.json', '.aistudio', 'skills'
+        }
+
+        def is_system_or_hidden(p: Path) -> bool:
+            try:
+                rel = p.relative_to(base_resolved)
+            except ValueError:
+                rel = p
+
+            parts = rel.parts
+            for i, part in enumerate(parts):
+                if part.startswith('.'):
+                    return True
+                if part == '__pycache__' or part.endswith('.pyc') or part.endswith('.pyo'):
+                    return True
+                if i == 0:
+                    if part in app_system_files or part.endswith('_helper.py'):
+                        return True
+            return False
+
         total_size = 0
         try:
             for entry in directory.rglob('*'):
-                if entry.is_file():
+                if entry.is_file() and not is_system_or_hidden(entry):
                     try:
                         total_size += entry.stat().st_size
                     except:

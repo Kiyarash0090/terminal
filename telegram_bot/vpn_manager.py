@@ -180,16 +180,34 @@ class VPNManager:
     @staticmethod
     def split_links(text: str) -> List[str]:
         """
-        جدا کردن چند لینک از یک متن.
+        جدا کردن چند لینک از یک متن یا رمزگشایی فایل NPV Tunnel (.npvt).
         هر لینک با پروتکل‌های شناخته‌شده شروع می‌شه.
         """
         import re
+        stripped = text.strip()
+
+        # بررسی فرمت NPV Tunnel (.npvt)
+        if "NPVT1" in stripped or (stripped.count(",") >= 1 and not stripped.startswith("{") and not stripped.startswith("[") and not stripped.startswith("vless://") and not stripped.startswith("vmess://")):
+            try:
+                import sys
+                from pathlib import Path
+                root_dir = Path(__file__).resolve().parent.parent
+                scripts_dir = str(root_dir / "scripts")
+                if scripts_dir not in sys.path:
+                    sys.path.insert(0, scripts_dir)
+                import npvt_parser
+                npvt_links = npvt_parser.parse_npvt_data(stripped)
+                if npvt_links:
+                    return npvt_links
+            except Exception:
+                pass
+
         # پیدا کردن همه لینک‌های شناخته‌شده
         pattern = r'((?:vmess|vless|trojan|ss)://[^\s\r\n]*)'
         links = re.findall(pattern, text)
         # اگر لینکی پیدا نشد ولی متن JSON بود، کل متن رو برگردون
-        if not links and text.strip().startswith("{"):
-            return [text.strip()]
+        if not links and stripped.startswith("{"):
+            return [stripped]
         return [l.strip() for l in links if l.strip()]
 
     def add_config(self, config_str: str, name: str = "") -> Tuple[bool, str]:
@@ -911,6 +929,9 @@ class VPNManager:
 
     def is_running(self) -> bool:
         """آیا xray/v2ray در حال اجراست و پورت SOCKS5 یا HTTP واقعاً باز است؟"""
+        if not self._store.get("enabled", False):
+            return False
+
         import socket
         process_alive = False
         try:

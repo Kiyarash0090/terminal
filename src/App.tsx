@@ -45,8 +45,7 @@ const TerminalView = lazyWithRetry(() => import('./components/TerminalView'), 'T
 const FileManager = lazyWithRetry(() => import('./components/FileManager'), 'FileManager');
 const ProcessManager = lazyWithRetry(() => import('./components/ProcessManager'), 'ProcessManager');
 const VpnManager = lazyWithRetry(() => import('./components/VpnManager'), 'VpnManager');
-const YouTubeManager = lazyWithRetry(() => import('./components/YouTubeManager'), 'YouTubeManager');
-const InstagramManager = lazyWithRetry(() => import('./components/InstagramManager'), 'InstagramManager');
+const DownloaderManager = lazyWithRetry(() => import('./components/DownloaderManager'), 'DownloaderManager');
 const DocumentationModal = lazyWithRetry(() => import('./components/DocumentationModal'), 'DocumentationModal');
 const SecurityModal = lazyWithRetry(() => import('./components/SecurityModal'), 'SecurityModal');
 const LoginModal = lazyWithRetry(() => import('./components/LoginModal'), 'LoginModal');
@@ -211,11 +210,8 @@ export default function App() {
 
           {/* Content Pane */}
           <main className="flex-1 p-3 sm:p-4 md:p-6 overflow-y-auto">
-            <div className={activeTab === 'youtube' ? '' : 'hidden'}>
-              <YouTubeManager lang={lang} token={auth.token} />
-            </div>
-            <div className={activeTab === 'instagram' ? '' : 'hidden'}>
-              <InstagramManager lang={lang} token={auth.token} />
+            <div className={activeTab === 'downloader' || activeTab === 'youtube' || activeTab === 'instagram' ? '' : 'hidden'}>
+              <DownloaderManager token={auth.token} lang={lang} isActive={activeTab === 'downloader' || activeTab === 'youtube' || activeTab === 'instagram'} />
             </div>
             <div className={activeTab === 'terminal' ? '' : 'hidden'}>
               <TerminalView token={auth.token} lang={lang} />
@@ -224,11 +220,11 @@ export default function App() {
               <FileManager token={auth.token} lang={lang} />
             </div>
             <div className={activeTab === 'processManager' ? '' : 'hidden'}>
-              <ProcessManager token={auth.token} lang={lang} />
+              <ProcessManager token={auth.token} lang={lang} isActive={activeTab === 'processManager'} />
             </div>
 
             <div className={activeTab === 'vpnManager' ? '' : 'hidden'}>
-              <VpnManager token={auth.token} lang={lang} />
+              <VpnManager token={auth.token} lang={lang} isActive={activeTab === 'vpnManager'} />
             </div>
           </main>
         </div>

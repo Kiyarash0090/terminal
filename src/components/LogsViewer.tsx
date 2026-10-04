@@ -143,19 +143,19 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
 
       {/* Log Console Container */}
       <div
-        className="relative rounded-2xl border border-neutral-200 dark:border-white/10 bg-neutral-900 dark:bg-[#121214] text-neutral-200 p-4 sm:p-5 font-mono text-xs h-[520px] overflow-y-auto space-y-2.5 shadow-2xl select-text cursor-text overscroll-contain touch-pan-y"
+        className="relative rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] text-neutral-800 dark:text-neutral-200 p-4 sm:p-5 font-mono text-xs h-[520px] overflow-y-auto space-y-2.5 shadow-xl select-text cursor-text overscroll-contain touch-pan-y"
         dir="ltr"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
         {filteredLogs.length === 0 ? (
-          <p className="text-neutral-500 italic text-center py-12 select-none">
+          <p className="text-neutral-400 dark:text-neutral-500 italic text-center py-12 select-none">
             {isFa ? 'هیچ لاگی با فیلتر مشخص شده پیدا نشد.' : 'No logs found matching filter.'}
           </p>
         ) : (
           filteredLogs.map((log) => (
             <div
               key={log.id}
-              className={`p-2.5 sm:p-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition flex flex-col sm:flex-row sm:items-center gap-2.5 select-text ${
+              className={`p-2.5 sm:p-3 rounded-xl bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/5 hover:bg-neutral-100/80 dark:hover:bg-white/10 transition flex flex-col sm:flex-row sm:items-center gap-2.5 select-text ${
                 log.level === 'ERROR'
                   ? 'border-l-4 border-l-red-500'
                   : log.level === 'WARN'
@@ -164,24 +164,24 @@ export const LogsViewer: React.FC<LogsViewerProps> = ({ token, lang }) => {
               }`}
             >
               <div className="flex items-center gap-2 shrink-0 select-text">
-                <span className="text-gray-500 text-[11px] font-mono select-text">
+                <span className="text-neutral-500 dark:text-gray-500 text-[11px] font-mono select-text">
                   [{new Date(log.timestamp).toLocaleTimeString()}]
                 </span>
                 <span
                   className={`px-2 py-0.5 rounded-lg text-[9px] font-bold uppercase tracking-wider select-none ${
                     log.level === 'ERROR'
-                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                      ? 'bg-red-500/15 dark:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30'
                       : log.level === 'WARN'
-                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                      : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                      ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                      : 'bg-blue-500/15 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30'
                   }`}
                 >
                   {log.level}
                 </span>
-                <span className="text-purple-400 font-semibold font-mono select-text">[{log.source}]</span>
+                <span className="text-purple-600 dark:text-purple-400 font-semibold font-mono select-text">[{log.source}]</span>
               </div>
 
-              <p className="text-gray-300 break-words flex-1 leading-relaxed font-mono text-xs select-text cursor-text selection:bg-blue-600/40 selection:text-white">
+              <p className="text-neutral-800 dark:text-gray-300 break-words flex-1 leading-relaxed font-mono text-xs select-text cursor-text selection:bg-blue-600/30 dark:selection:bg-blue-600/40 selection:text-neutral-900 dark:selection:text-white">
                 {highlightMatch(log.message, searchQuery)}
               </p>
             </div>

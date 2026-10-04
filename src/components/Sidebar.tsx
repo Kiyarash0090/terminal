@@ -1,9 +1,9 @@
 import React from 'react';
-import { Terminal as TerminalIcon, FolderOpen, Cpu, Globe, Youtube, Instagram } from 'lucide-react';
+import { Terminal as TerminalIcon, FolderOpen, Cpu, Globe, DownloadCloud } from 'lucide-react';
 import { Language } from '../types';
 import { translations } from '../locales/translations';
 
-export type ActiveTab = 'terminal' | 'fileManager' | 'processManager' | 'vpnManager' | 'youtube' | 'instagram';
+export type ActiveTab = 'terminal' | 'fileManager' | 'processManager' | 'vpnManager' | 'downloader' | 'youtube' | 'instagram';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -19,8 +19,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, lang }
     { id: 'fileManager' as ActiveTab, label: t.fileManager, icon: FolderOpen, color: 'text-amber-500' },
     { id: 'processManager' as ActiveTab, label: t.processManager, icon: Cpu, color: 'text-purple-500' },
     { id: 'vpnManager' as ActiveTab, label: t.vpnManager, icon: Globe, color: 'text-indigo-500' },
-    { id: 'youtube' as ActiveTab, label: (t as any).youtubeManager || (lang === 'fa' ? 'بخش یوتیوب' : 'YouTube Manager'), icon: Youtube, color: 'text-rose-500' },
-    { id: 'instagram' as ActiveTab, label: (t as any).instagramManager || (lang === 'fa' ? 'بخش اینستاگرام' : 'Instagram Manager'), icon: Instagram, color: 'text-pink-500' },
+    { id: 'downloader' as ActiveTab, label: (t as any).downloader || (lang === 'fa' ? 'دانلودر' : 'Downloader'), icon: DownloadCloud, color: 'text-rose-500' },
   ];
 
 

@@ -1048,43 +1048,57 @@ function calculateCpuUsage(cores: number): Promise<number> {
   });
 }
 
+let cachedDiskMetrics = {
+  totalGB: 100,
+  usedGB: 0.3,
+  freeGB: 99.7,
+  usedMB: 320,
+  percent: 0.3
+};
+let lastDiskMetricsCheck = 0;
+
 app.get('/api/metrics/live', async (req: Request, res: Response) => {
   try {
     const containerRes = getContainerResourceMetrics();
     const cpuPercent = await calculateCpuUsage(containerRes.cpuCores);
 
-    let diskTotalGB = 100;
-    let diskUsedGB = 0.3;
-    let diskFreeGB = 99.7;
-    let diskUsedMB = 320;
-    let diskPercent = 0.3;
-
-    try {
-      let dfStr = '';
+    // Cached disk calculation to avoid spawning shell processes every 3 seconds
+    if (Date.now() - lastDiskMetricsCheck > 20000) {
       try {
-        const { stdout } = await execAsync("df -k . | tail -n 1");
-        dfStr = stdout;
-      } catch {
-        const { stdout } = await execAsync("df -k / | tail -n 1");
-        dfStr = stdout;
-      }
-      const parts = dfStr.trim().split(/\s+/);
-      if (parts.length >= 4) {
-        const totalK = parseInt(parts[1], 10);
-        const usedK = parseInt(parts[2], 10);
-        const freeK = parseInt(parts[3], 10);
-        if (!isNaN(totalK) && totalK > 0) {
-          diskTotalGB = Math.round((totalK / (1024 * 1024)) * 10) / 10;
-          diskUsedGB = Math.round((usedK / (1024 * 1024)) * 10) / 10;
-          diskFreeGB = Math.round((freeK / (1024 * 1024)) * 10) / 10;
-          diskUsedMB = Math.round(usedK / 1024);
-          const rawPct = (usedK / totalK) * 100;
-          diskPercent = Math.max(0.1, Math.round(rawPct * 10) / 10);
+        let dfStr = '';
+        try {
+          const { stdout } = await execAsync("df -k . | tail -n 1");
+          dfStr = stdout;
+        } catch {
+          const { stdout } = await execAsync("df -k / | tail -n 1");
+          dfStr = stdout;
         }
+        const parts = dfStr.trim().split(/\s+/);
+        if (parts.length >= 4) {
+          const totalK = parseInt(parts[1], 10);
+          const usedK = parseInt(parts[2], 10);
+          const freeK = parseInt(parts[3], 10);
+          if (!isNaN(totalK) && totalK > 0) {
+            cachedDiskMetrics = {
+              totalGB: Math.round((totalK / (1024 * 1024)) * 10) / 10,
+              usedGB: Math.round((usedK / (1024 * 1024)) * 10) / 10,
+              freeGB: Math.round((freeK / (1024 * 1024)) * 10) / 10,
+              usedMB: Math.round(usedK / 1024),
+              percent: Math.max(0.1, Math.round(((usedK / totalK) * 100) * 10) / 10)
+            };
+            lastDiskMetricsCheck = Date.now();
+          }
+        }
+      } catch {
+        // Fallback to previous cached values
       }
-    } catch {
-      // Fallback
     }
+
+    const diskTotalGB = cachedDiskMetrics.totalGB;
+    const diskUsedGB = cachedDiskMetrics.usedGB;
+    const diskFreeGB = cachedDiskMetrics.freeGB;
+    const diskUsedMB = cachedDiskMetrics.usedMB;
+    const diskPercent = cachedDiskMetrics.percent;
 
     // Network traffic calculation - read real data from /proc/net/dev on Linux
     let currentRx = 0;
@@ -1714,7 +1728,7 @@ app.get('/api/files/list', async (req: Request, res: Response) => {
           // Frontend & app source code
           'src', 'assets', 'public', 'index.html', 'metadata.json',
           // Python backend & internal helper scripts
-          'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot',
+          'instagram_aiograpi_helper.py', 'youtube_pytubefix_helper.py', 'telegram_bot.py', 'telegram_bot', 'scripts',
           'get-pip.py', 'requirements.txt', '__pycache__',
           // Internal configs, servers, and sessions
           'server.ts', 'server.ts.orig', 'Dockerfile', 'nixpacks.toml', 'railway.json', 'README.md', 'proxychains.conf',
@@ -4380,13 +4394,15 @@ app.post('/api/telegram-bot/start', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'لطفاً توکن ربات و شناسه عددی کاربری را تنظیم کنید' });
     }
 
-    // Stop existing bot if running
+    // Stop existing bot if running and clean up any orphan processes
     const existing = backgroundTasks.get('telegram_bot_process');
-    if (existing && existing.task.status === 'running') {
-      if (existing.process) {
-        try { existing.process.kill('SIGTERM'); } catch {}
-      }
+    if (existing && existing.process) {
+      try { existing.process.kill('SIGKILL'); } catch {}
     }
+    try {
+      await execAsync('pkill -9 -f telegram_bot.py 2>/dev/null || true');
+      await new Promise(r => setTimeout(r, 600));
+    } catch {}
 
     const taskData: BackgroundTask = {
       id: 'telegram_bot_process',
@@ -4566,12 +4582,77 @@ setInterval(checkAndSendSystemAlerts, 30000);
 
 // ---------------------- VPN MANAGEMENT ----------------------
 const VPN_CLI = path.join(TELEGRAM_BOT_DIR, 'vpn_cli.py');
+const ACTIVE_CONFIG_FILE = path.join(TELEGRAM_BOT_DIR, 'vpn_active.json');
+
+let vpnStatusCache: { data: any; expiry: number } | null = null;
+
+function invalidateVpnCache() {
+  vpnStatusCache = null;
+}
 
 async function runVpnCli(cmd: string, args: string[] = []): Promise<any> {
   const escapedArgs = args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
   const fullCmd = `python3 "${VPN_CLI}" ${cmd} ${escapedArgs}`;
   const { stdout } = await execAsync(fullCmd);
   return JSON.parse(stdout.trim());
+}
+
+async function getCachedVpnStatus(forceRefresh = false): Promise<any> {
+  const now = Date.now();
+  if (!forceRefresh && vpnStatusCache && now < vpnStatusCache.expiry) {
+    return vpnStatusCache.data;
+  }
+
+  // Ultra-fast zero-overhead check:
+  // If vpn_active.json does not exist, VPN has never been configured or enabled.
+  if (!fs.existsSync(ACTIVE_CONFIG_FILE)) {
+    const defaultData = {
+      running: false,
+      enabled: false,
+      activeIndex: null,
+      activeName: null,
+      configsCount: 0,
+      socksProxy: '127.0.0.1:10808',
+      httpProxy: '127.0.0.1:10809'
+    };
+    vpnStatusCache = { data: defaultData, expiry: now + 5000 };
+    return defaultData;
+  }
+
+  // If file exists, inspect 'enabled' flag directly without spawning Python
+  try {
+    const raw = fs.readFileSync(ACTIVE_CONFIG_FILE, 'utf-8');
+    const store = JSON.parse(raw);
+    if (!store.enabled) {
+      const data = {
+        running: false,
+        enabled: false,
+        activeIndex: store.active_index ?? null,
+        activeName: (store.configs && store.active_index != null) ? store.configs[store.active_index]?.name : null,
+        configsCount: Array.isArray(store.configs) ? store.configs.length : 0,
+        socksProxy: '127.0.0.1:10808',
+        httpProxy: '127.0.0.1:10809'
+      };
+      vpnStatusCache = { data, expiry: now + 5000 };
+      return data;
+    }
+  } catch {}
+
+  // If enabled is true, run CLI once and cache for 4 seconds
+  try {
+    const data = await runVpnCli('status');
+    vpnStatusCache = { data, expiry: now + 4000 };
+    return data;
+  } catch (err: any) {
+    return {
+      running: false,
+      enabled: false,
+      error: err.message,
+      configsCount: 0,
+      socksProxy: '127.0.0.1:10808',
+      httpProxy: '127.0.0.1:10809'
+    };
+  }
 }
 
 async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Promise<{ command: string; env: Record<string, string> }> {
@@ -4592,7 +4673,7 @@ async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Pr
 
   let vpnRunning = false;
   try {
-    const status = await runVpnCli('status');
+    const status = await getCachedVpnStatus();
     vpnRunning = Boolean(status && (status.running || status.enabled));
   } catch {}
 
@@ -4612,11 +4693,6 @@ async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Pr
     env.socks_proxy = socksUrl;
     env.SOCKS5_PROXY = socksUrl;
     env.socks5_proxy = socksUrl;
-
-    // Do NOT prepend proxychains4.
-    // Proxychains injects LD_PRELOAD hooks which destroy TLS fingerprints (JA3/JA4)
-    // and causes YouTube/Cloudflare bot detection blocks on yt-dlp, python, and curl.
-    // Clean environment variables allow native tools to route traffic transparently.
   }
 
   return { command: finalCommand, env };
@@ -4624,7 +4700,7 @@ async function getVpnWrappedCommand(command: string, useVpn: boolean = true): Pr
 
 app.get('/api/vpn/status', async (req: Request, res: Response) => {
   try {
-    const data = await runVpnCli('status');
+    const data = await getCachedVpnStatus();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to fetch VPN status: ' + err.message });
@@ -4645,9 +4721,68 @@ app.post('/api/vpn/configs/add', async (req: Request, res: Response) => {
     const { configStr, name } = req.body;
     if (!configStr) return res.status(400).json({ error: 'لینک یا کد کانفیگ الزامی است' });
     const data = await runVpnCli('add', [configStr, name || '']);
+    invalidateVpnCache();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to add VPN config: ' + err.message });
+  }
+});
+
+app.post('/api/vpn/configs/parse-npvt', tempUpload.single('file'), async (req: Request, res: Response) => {
+  let tmpPathToDelete = '';
+  try {
+    let filePath = '';
+    if (req.file) {
+      filePath = req.file.path;
+      tmpPathToDelete = filePath;
+    } else if (req.body && req.body.content) {
+      const tmpInputPath = path.join(os.tmpdir(), `npvt_${Date.now()}_${Math.random().toString(36).slice(2)}.npvt`);
+      await fs.promises.writeFile(tmpInputPath, String(req.body.content), 'utf-8');
+      filePath = tmpInputPath;
+      tmpPathToDelete = tmpInputPath;
+    }
+
+    if (!filePath) {
+      return res.status(400).json({ error: 'فایل یا محتوای NPV Tunnel (.npvt) یافت نشد.' });
+    }
+
+    const parserScript = path.join(process.cwd(), 'scripts', 'npvt_parser.py');
+    const { stdout } = await execAsync(`python3 "${parserScript}" "${filePath}"`);
+    
+    if (tmpPathToDelete && fs.existsSync(tmpPathToDelete)) {
+      try { await fs.promises.unlink(tmpPathToDelete); } catch {}
+    }
+
+    const links: string[] = JSON.parse(stdout.trim() || '[]');
+    if (!links || links.length === 0) {
+      return res.status(400).json({
+        error: 'هیچ کانفیگ معتبری از این فایل NPV Tunnel استخراج نشد. لطفاً از سالم بودن فایل مطمئن شوید.'
+      });
+    }
+
+    if (req.body.autoAdd === 'true' || req.body.autoAdd === true) {
+      const addedData = await runVpnCli('add', [links.join('\n')]);
+      invalidateVpnCache();
+      return res.json({
+        success: true,
+        count: links.length,
+        configs: links,
+        added: addedData.added,
+        message: `${links.length} کانفیگ با موفقیت از فایل NPV Tunnel استخراج و به لیست اضافه شدند.`
+      });
+    }
+
+    return res.json({
+      success: true,
+      count: links.length,
+      configs: links,
+      message: `${links.length} کانفیگ با موفقیت از فایل NPV Tunnel استخراج شد.`
+    });
+  } catch (err: any) {
+    if (tmpPathToDelete && fs.existsSync(tmpPathToDelete)) {
+      try { await fs.promises.unlink(tmpPathToDelete); } catch {}
+    }
+    res.status(500).json({ error: 'خطا در رمزگشایی فایل NPV Tunnel: ' + (err.message || err) });
   }
 });
 
@@ -4681,6 +4816,7 @@ app.post('/api/vpn/configs/delete', async (req: Request, res: Response) => {
       data.trashId = trashId;
     }
 
+    invalidateVpnCache();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to delete config: ' + err.message });
@@ -4704,6 +4840,7 @@ app.post('/api/vpn/configs/restore', async (req: Request, res: Response) => {
     }
 
     vpnTrashMap.delete(trashId);
+    invalidateVpnCache();
 
     res.json({
       success: true,
@@ -4720,6 +4857,7 @@ app.post('/api/vpn/configs/select', async (req: Request, res: Response) => {
     const { index } = req.body;
     if (index === undefined) return res.status(400).json({ error: 'شناسه کانفیگ الزامی است' });
     const data = await runVpnCli('select', [String(index)]);
+    invalidateVpnCache();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to select config: ' + err.message });
@@ -4729,6 +4867,7 @@ app.post('/api/vpn/configs/select', async (req: Request, res: Response) => {
 app.post('/api/vpn/start', async (req: Request, res: Response) => {
   try {
     const data = await runVpnCli('start');
+    invalidateVpnCache();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to start VPN: ' + err.message });
@@ -4738,6 +4877,7 @@ app.post('/api/vpn/start', async (req: Request, res: Response) => {
 app.post('/api/vpn/stop', async (req: Request, res: Response) => {
   try {
     const data = await runVpnCli('stop');
+    invalidateVpnCache();
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to stop VPN: ' + err.message });
@@ -4809,18 +4949,11 @@ app.get('/api/vpn/logs', async (req: Request, res: Response) => {
       } catch (e: any) {
         logs = [`Error reading log file: ${e.message}`];
       }
-    } else {
-      try {
-        const cliData = await runVpnCli('logs', [String(maxLines)]);
-        logs = cliData.logs || [];
-      } catch {}
     }
 
-    let isRunning = false;
-    try {
-      const status = await runVpnCli('status');
-      isRunning = Boolean(status && status.running);
-    } catch {}
+    // Fast check without spawning python processes
+    const status = await getCachedVpnStatus();
+    const isRunning = Boolean(status && status.running);
 
     res.json({
       logs,

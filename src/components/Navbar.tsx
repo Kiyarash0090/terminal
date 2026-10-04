@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Sun, Moon, Languages, LogOut, Shield, Wifi, User as UserIcon, BookOpen, Bot, Menu, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Sun, Moon, Languages, LogOut, Shield, User as UserIcon, BookOpen, Bot, Menu, X, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Language, ThemeMode, User } from '../types';
 import { translations } from '../locales/translations';
@@ -34,6 +34,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   const t = translations[lang];
   const [botRunning, setBotRunning] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState<boolean>(false);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
 
   const isRtl = lang === 'fa';
   const slideInitialX = isRtl ? '-100%' : '100%';
@@ -50,18 +52,30 @@ export const Navbar: React.FC<NavbarProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Close mobile menu on Escape key
+  // Close mobile menu and profile dropdown on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsMobileMenuOpen(false);
+        setIsProfileDropdownOpen(false);
       }
     };
-    if (isMobileMenuOpen) {
-      window.addEventListener('keydown', handleKeyDown);
-    }
+    window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isMobileMenuOpen]);
+  }, []);
+
+  // Close profile dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+        setIsProfileDropdownOpen(false);
+      }
+    };
+    if (isProfileDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isProfileDropdownOpen]);
 
   useEffect(() => {
     if (!token) return;
@@ -93,36 +107,28 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-30 h-12 sm:h-14 md:h-16 border-b border-neutral-200 dark:border-white/10 bg-white/90 dark:bg-[#0A0A0B]/80 backdrop-blur-md px-2.5 sm:px-4 md:px-6 flex items-center justify-between transition-colors">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="h-7 w-7 sm:h-9 sm:w-9 md:h-10 md:w-10 rounded-lg sm:rounded-xl overflow-hidden border border-emerald-500/30 shadow-lg shadow-emerald-500/10 bg-neutral-900 shrink-0">
+      <header className="sticky top-0 z-30 h-13 sm:h-14 md:h-15 border-b border-neutral-200/80 dark:border-white/5 bg-white/95 dark:bg-[#09090b]/90 backdrop-blur-md px-3 sm:px-4 md:px-6 flex items-center justify-between transition-colors">
+        {/* Left Side: Brand Logo & Title */}
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+          <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl overflow-hidden border border-emerald-500/25 shadow-xs bg-neutral-900 shrink-0">
             <img src={avatarImg} alt="Terminal Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
           </div>
-          <div>
-            <h1 className="font-bold text-xs sm:text-sm md:text-base leading-tight tracking-tight text-neutral-900 dark:text-white">
+          <div className="min-w-0">
+            <h1 className="font-bold text-xs sm:text-sm md:text-[15px] leading-tight text-neutral-900 dark:text-white truncate">
               {t.appTitle}
             </h1>
-            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 hidden sm:block">
+            <p className="text-[10px] sm:text-[11px] text-neutral-500 dark:text-neutral-400 truncate hidden sm:block">
               {t.appSubTitle}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent('toggle-server-info'))}
-            className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-green-500/10 hover:bg-green-500/20 text-green-600 dark:text-green-400 border border-green-500/20 mr-2 cursor-pointer transition"
-            title={lang === 'fa' ? 'مشاهده اطلاعات سرور و وضعیت Railway' : 'View Server Info & Railway Status'}
-          >
-            <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-            <Wifi className="h-3.5 w-3.5" />
-            <span>{t.serverOnline}</span>
-          </button>
         </div>
 
+        {/* Right Side: Minimal Action Toolbar */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           {/* Telegram Bot Button */}
           <button
             onClick={onOpenTelegramBot}
-            className="relative px-2 py-1.5 sm:px-3 sm:py-1.5 text-sky-600 dark:text-sky-400 rounded-lg sm:rounded-xl bg-sky-500/10 dark:bg-sky-500/15 border border-sky-500/30 hover:bg-sky-500/20 transition flex items-center gap-1.5 sm:gap-2 cursor-pointer shadow-sm active:scale-95 text-xs font-semibold"
+            className="px-2.5 py-1.5 text-sky-600 dark:text-sky-400 rounded-lg sm:rounded-xl bg-sky-500/10 hover:bg-sky-500/15 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 border border-sky-500/25 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 text-xs font-semibold"
             title={
               lang === 'fa' 
                 ? `مدیریت ربات تلگرام - وضعیت: ${botRunning ? 'روشن (فعال)' : 'خاموش'}` 
@@ -131,78 +137,171 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <div className="relative flex items-center justify-center">
               <Bot className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-sky-500 shrink-0" />
-              {/* Status Indicator Dot */}
               <span 
-                className={`absolute -top-1 -right-1 h-2 w-2 rounded-full ring-2 ring-white dark:ring-[#0A0A0B] ${
-                  botRunning ? 'bg-green-500 animate-pulse' : 'bg-neutral-400 dark:bg-neutral-600'
+                className={`absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-white dark:ring-[#09090b] ${
+                  botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-400 dark:bg-neutral-600'
                 }`}
               />
             </div>
             <span className="hidden sm:inline">{t.telegramBot}</span>
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${
               botRunning 
-                ? 'bg-green-500/15 text-green-600 dark:text-green-400 border border-green-500/30' 
+                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' 
                 : 'bg-neutral-500/15 text-neutral-500 dark:text-neutral-400 border border-neutral-500/30'
             }`}>
               {botRunning ? (lang === 'fa' ? 'روشن' : 'ON') : (lang === 'fa' ? 'خاموش' : 'OFF')}
             </span>
           </button>
 
-          {/* Quick Documentation & Guide Button (Desktop) */}
-          <button
-            onClick={onOpenDocumentation}
-            className="hidden md:flex p-1.5 sm:p-2 text-indigo-600 dark:text-indigo-400 rounded-lg sm:rounded-xl bg-indigo-500/10 dark:bg-indigo-500/15 border border-indigo-500/30 hover:bg-indigo-500/20 transition items-center justify-center cursor-pointer shadow-sm active:scale-95"
-            title={lang === 'fa' ? 'داکیومنت و راهنمای سریع (Shift + ?)' : 'Quick Guide & Documentation (Shift + ?)'}
-          >
-            <BookOpen className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-500" />
-          </button>
-
-          {/* Language Toggle (Desktop) */}
-          <button
-            onClick={onToggleLang}
-            className="hidden md:flex px-2 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition items-center gap-1 text-neutral-700 dark:text-neutral-200 cursor-pointer"
-            title={t.langToggle}
-          >
-            <Languages className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-            <span>{t.langToggle}</span>
-          </button>
-
           {/* Theme Toggle (Desktop) */}
           <button
             onClick={onToggleTheme}
-            className="hidden md:flex p-1.5 sm:p-2 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition text-neutral-700 dark:text-neutral-200 cursor-pointer"
+            className="hidden md:flex p-1.5 sm:p-2 rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200/80 dark:hover:bg-white/10 transition-all text-neutral-700 dark:text-neutral-200 cursor-pointer active:scale-95"
             title={t.themeToggle}
           >
             {theme === 'dark' ? <Sun className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-400" /> : <Moon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-700" />}
           </button>
 
-          {/* Security Settings Button (Desktop) */}
-          {user && (
-            <button
-              onClick={onOpenSecurity}
-              className="hidden md:flex px-2 py-1.5 sm:px-3 sm:py-1.5 text-xs font-semibold rounded-lg sm:rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-              title={t.securitySettings}
-            >
-              <Shield className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-500 shrink-0" />
-              <span>{t.securitySettings}</span>
-            </button>
-          )}
+          {/* Language Toggle (Desktop) */}
+          <button
+            onClick={onToggleLang}
+            className="hidden md:flex px-2.5 py-1.5 text-xs font-medium rounded-lg sm:rounded-xl border border-neutral-200 dark:border-white/10 bg-neutral-100 dark:bg-white/5 hover:bg-neutral-200/80 dark:hover:bg-white/10 transition-all items-center gap-1.5 text-neutral-700 dark:text-neutral-200 cursor-pointer active:scale-95"
+            title={t.langToggle}
+          >
+            <Languages className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-400" />
+            <span>{lang === 'fa' ? 'FA' : 'EN'}</span>
+          </button>
 
-          {/* Logout Button (Desktop) */}
+          {/* User Profile Dropdown (Desktop) */}
           {user && (
-            <div className="hidden md:flex items-center gap-1 sm:gap-2 pl-1.5 sm:pl-2 border-l border-neutral-200 dark:border-neutral-800">
-              <span className="hidden lg:flex items-center gap-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 px-2 py-1 rounded-md bg-neutral-100 dark:bg-neutral-800/60">
-                <UserIcon className="h-3.5 w-3.5 text-emerald-500" />
-                <span>{user.username}</span>
-              </span>
-
+            <div className="relative hidden md:block" ref={profileDropdownRef}>
               <button
-                onClick={onLogout}
-                className="p-1.5 sm:p-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 border border-red-200/50 dark:border-red-900/30 transition cursor-pointer"
-                title={t.logout}
+                type="button"
+                onClick={() => setIsProfileDropdownOpen(prev => !prev)}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer active:scale-95 ${
+                  isProfileDropdownOpen
+                    ? 'bg-neutral-100 dark:bg-white/10 border-neutral-300 dark:border-white/20 shadow-xs'
+                    : 'bg-neutral-100/80 hover:bg-neutral-200/80 dark:bg-white/5 dark:hover:bg-white/10 border-neutral-200 dark:border-white/10'
+                }`}
+                title={lang === 'fa' ? 'پروفایل کاربری و تنظیمات' : 'User Profile & Settings'}
               >
-                <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <div className="h-6 w-6 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 shrink-0">
+                  <UserIcon className="h-3.5 w-3.5" />
+                </div>
+                <span className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 max-w-[100px] truncate">
+                  {user.username}
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 text-neutral-400 transition-transform duration-200 ${isProfileDropdownOpen ? 'rotate-180' : ''}`} />
               </button>
+
+              {/* Dropdown Menu Modal / Popover */}
+              <AnimatePresence>
+                {isProfileDropdownOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                    transition={{ duration: 0.15 }}
+                    className={`absolute z-50 mt-2 w-64 rounded-2xl bg-white dark:bg-[#141417] border border-neutral-200 dark:border-white/10 shadow-2xl p-2 ${
+                      isRtl ? 'left-0' : 'right-0'
+                    }`}
+                  >
+                    {/* User Header Info Card */}
+                    <div className="p-3 bg-neutral-50 dark:bg-white/5 rounded-xl border border-neutral-100 dark:border-white/5 mb-1.5 flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-500/20 to-teal-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-500 font-bold shrink-0 shadow-2xs">
+                        <UserIcon className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-sm text-neutral-900 dark:text-white truncate">
+                            {user.username}
+                          </span>
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
+                            {user.role || (lang === 'fa' ? 'مدیر سیستم' : 'Admin')}
+                          </span>
+                          <span className="text-[10px] text-neutral-400 truncate">
+                            {lang === 'fa' ? 'فعال' : 'Active'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Menu Items */}
+                    <div className="space-y-1">
+                      {/* Security Settings */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileDropdownOpen(false);
+                          onOpenSecurity();
+                        }}
+                        className="w-full px-3 py-2.5 rounded-xl flex items-center gap-2.5 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5 transition text-start cursor-pointer group"
+                      >
+                        <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 group-hover:bg-emerald-500/20 transition shrink-0">
+                          <Shield className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-xs text-neutral-900 dark:text-white">
+                            {t.securitySettings}
+                          </div>
+                          <div className="text-[10px] text-neutral-400 truncate">
+                            {lang === 'fa' ? 'تغییر رمز عبور و تنظیمات امنیتی' : 'Change password & security'}
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Documentation */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileDropdownOpen(false);
+                          onOpenDocumentation();
+                        }}
+                        className="w-full px-3 py-2.5 rounded-xl flex items-center gap-2.5 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/5 transition text-start cursor-pointer group"
+                      >
+                        <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 group-hover:bg-indigo-500/20 transition shrink-0">
+                          <BookOpen className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-xs text-neutral-900 dark:text-white">
+                            {t.documentation}
+                          </div>
+                          <div className="text-[10px] text-neutral-400 truncate">
+                            {lang === 'fa' ? 'راهنما و مستندات سیستم (Shift + ?)' : 'Documentation & guide'}
+                          </div>
+                        </div>
+                      </button>
+
+                      <div className="h-px bg-neutral-200/70 dark:bg-white/10 my-1" />
+
+                      {/* Logout Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileDropdownOpen(false);
+                          onLogout();
+                        }}
+                        className="w-full px-3 py-2.5 rounded-xl flex items-center gap-2.5 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition text-start cursor-pointer group"
+                      >
+                        <div className="p-1.5 rounded-lg bg-rose-500/15 text-rose-500 group-hover:bg-rose-500/25 transition shrink-0">
+                          <LogOut className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold text-xs text-rose-600 dark:text-rose-400">
+                            {t.logout}
+                          </div>
+                          <div className="text-[10px] text-rose-400/80 truncate">
+                            {lang === 'fa' ? 'خروج امن از حساب کاربری' : 'Secure logout'}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
 

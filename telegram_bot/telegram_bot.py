@@ -1747,16 +1747,23 @@ async def main():
     await app.initialize()
     await app.start()
     logger.info("Bot started successfully and polling...")
-    await app.updater.start_polling()
-    
-    # Run forever
     try:
+        await app.updater.start_polling(drop_pending_updates=True)
+        # Run forever
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+        pass
+    except Exception as e:
+        logger.error(f"Telegram polling exception encountered: {e}")
+    finally:
+        try:
+            if app.updater and app.updater.running:
+                await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
+        except:
+            pass
 
 if __name__ == "__main__":
     try:

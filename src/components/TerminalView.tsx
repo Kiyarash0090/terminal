@@ -849,12 +849,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
       )}
 
       {/* Main Terminal Outer Container */}
-      <div className={`rounded-2xl border border-neutral-200 dark:border-white/10 bg-neutral-900 dark:bg-[#121214] shadow-2xl overflow-hidden flex flex-col ${
+      <div className={`rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-[#121214] shadow-2xl overflow-hidden flex flex-col ${
         isFullscreen ? 'flex-1 h-full min-h-0' : ''
       }`}>
 
         {/* 📑 MULTI-TAB STRIP HEADER */}
-        <div className="bg-neutral-950/80 border-b border-white/10 flex items-center justify-between px-2 pt-2 gap-2 select-none overflow-x-auto scrollbar-none">
+        <div className="bg-neutral-100 dark:bg-neutral-950/80 border-b border-neutral-200 dark:border-white/10 flex items-center justify-between px-2 pt-2 gap-2 select-none overflow-x-auto scrollbar-none">
           {/* Tabs List */}
           <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto scrollbar-none py-0.5">
             {tabs.map((tab, idx) => {
@@ -871,8 +871,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                   onDoubleClick={(e) => handleStartRename(e, tab.id, tab.title)}
                   className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-t-xl text-xs font-mono transition-all cursor-pointer shrink-0 max-w-[190px] sm:max-w-[240px] border-t border-x ${
                     isActive
-                      ? 'bg-neutral-900 dark:bg-[#121214] border-white/15 text-neutral-100 shadow-md font-semibold'
-                      : 'bg-neutral-900/40 border-transparent text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900/70'
+                      ? 'bg-neutral-50 dark:bg-[#121214] border-neutral-200 dark:border-white/15 text-neutral-900 dark:text-neutral-100 shadow-xs font-semibold'
+                      : 'bg-transparent border-transparent text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200/60 dark:text-neutral-400 dark:hover:text-neutral-200 dark:hover:bg-neutral-900/70'
                   }`}
                   title={`${tab.title} (${tab.cwd}) - Alt+${idx + 1}`}
                 >
@@ -883,7 +883,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </span>
                   ) : (
-                    <SquareTerminal className={`h-3.5 w-3.5 ${isActive ? 'text-emerald-400' : 'text-neutral-500'}`} />
+                    <SquareTerminal className={`h-3.5 w-3.5 ${isActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-400 dark:text-neutral-500'}`} />
                   )}
 
                   {/* Title or Inline Edit Input */}
@@ -899,12 +899,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                           if (e.key === 'Enter') handleSaveRename(tab.id);
                           if (e.key === 'Escape') setEditingTabId(null);
                         }}
-                        className="w-24 px-1 py-0.5 text-xs bg-neutral-800 border border-blue-500 rounded text-neutral-100 outline-none"
+                        className="w-24 px-1 py-0.5 text-xs bg-white dark:bg-neutral-800 border border-blue-500 rounded text-neutral-900 dark:text-neutral-100 outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => handleSaveRename(tab.id)}
-                        className="p-0.5 text-emerald-400 hover:text-emerald-300"
+                        className="p-0.5 text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 dark:hover:text-emerald-300"
                       >
                         <CheckCheck className="h-3 w-3" />
                       </button>
@@ -914,7 +914,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                   )}
 
                   {/* Tab Number Hint (Alt+1..9) */}
-                  <span className="text-[9px] text-neutral-500 opacity-60 hidden sm:inline">
+                  <span className="text-[9px] text-neutral-400 dark:text-neutral-500 opacity-60 hidden sm:inline">
                     {idx < 9 ? `Alt+${idx + 1}` : ''}
                   </span>
 
@@ -924,7 +924,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                       <button
                         type="button"
                         onClick={(e) => handleStartRename(e, tab.id, tab.title)}
-                        className="p-0.5 rounded hover:bg-white/10 text-neutral-400 hover:text-neutral-200 transition"
+                        className="p-0.5 rounded hover:bg-neutral-200 dark:hover:bg-white/10 text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200 transition"
                         title={t.renameTab || 'تغییر نام تب'}
                       >
                         <Edit2 className="h-2.5 w-2.5" />
@@ -933,7 +933,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                     <button
                       type="button"
                       onClick={(e) => handleCloseTab(e, tab.id)}
-                      className="p-0.5 rounded hover:bg-rose-500/20 text-neutral-400 hover:text-rose-400 transition"
+                      className="p-0.5 rounded hover:bg-rose-100 dark:hover:bg-rose-500/20 text-neutral-500 hover:text-rose-600 dark:text-neutral-400 dark:hover:text-rose-400 transition"
                       title={t.closeTab || 'بستن تب (Alt+W)'}
                     >
                       <X className="h-3 w-3" />
@@ -947,82 +947,18 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
             <button
               type="button"
               onClick={handleAddNewTab}
-              className="p-1.5 ml-1 rounded-lg bg-white/5 hover:bg-white/10 text-neutral-300 hover:text-white border border-white/5 transition flex items-center gap-1 text-xs shrink-0 cursor-pointer shadow-sm"
+              className="p-1.5 ml-1 rounded-lg bg-white dark:bg-white/5 hover:bg-neutral-200/80 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white border border-neutral-200 dark:border-white/5 transition flex items-center gap-1 text-xs shrink-0 cursor-pointer shadow-xs dark:shadow-sm"
               title={t.newTab ? `${t.newTab} (Alt+T)` : 'تب جدید (Alt+T)'}
             >
               <Plus className="h-3.5 w-3.5" />
               <span className="text-[11px] hidden md:inline">{t.newTab || 'تب جدید'}</span>
             </button>
           </div>
-
-          {/* Right Tab Controls: Fullscreen, Zoom, Copy, Clear */}
-          <div className="flex items-center gap-1 sm:gap-1.5 pb-1 shrink-0 text-xs">
-            {/* Fullscreen Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className={`p-1.5 rounded-lg border transition cursor-pointer ${
-                isFullscreen
-                  ? 'bg-blue-600/30 border-blue-500/40 text-blue-300 hover:bg-blue-600/50'
-                  : 'bg-white/5 border-white/10 hover:bg-white/10 text-neutral-300 hover:text-white'
-              }`}
-              title={isFullscreen ? (t.exitFullscreen || 'خروج از تمام‌صفحه (Esc / F11)') : (t.fullscreen || 'حالت تمام‌صفحه (F11)')}
-            >
-              {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </button>
-
-            {/* Font Size Zoom Controls */}
-            <div className="flex items-center bg-white/5 border border-white/10 rounded-lg p-0.5 text-xs select-none">
-              <button
-                type="button"
-                onClick={handleZoomOut}
-                disabled={fontSizeIdx <= 0}
-                className="p-1 rounded hover:bg-white/10 disabled:opacity-30 text-neutral-300 hover:text-white transition cursor-pointer"
-                title={t.zoomOut || 'کوچک‌نمایی قلم (Ctrl+-)'}
-              >
-                <ZoomOut className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={handleResetZoom}
-                className="px-1.5 py-0.5 text-[10px] font-mono font-medium text-neutral-300 hover:text-white hover:bg-white/10 rounded transition cursor-pointer"
-                title={t.resetFontSize || 'اندازه پیش‌فرض قلم (Ctrl+0)'}
-              >
-                {FONT_SIZES[fontSizeIdx].label}
-              </button>
-              <button
-                type="button"
-                onClick={handleZoomIn}
-                disabled={fontSizeIdx >= FONT_SIZES.length - 1}
-                className="p-1 rounded hover:bg-white/10 disabled:opacity-30 text-neutral-300 hover:text-white transition cursor-pointer"
-                title={t.zoomIn || 'بزرگ‌نمایی قلم (Ctrl++)'}
-              >
-                <ZoomIn className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleCopyLogs}
-              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-neutral-300 hover:text-white transition cursor-pointer"
-              title={t.copyOutput || 'کپی خروجی تب فعلی'}
-            >
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleClear(activeTab?.id)}
-              className="p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/20 text-neutral-300 hover:text-rose-400 transition cursor-pointer"
-              title={t.clearTerminal || 'پاکسازی صفحه (Ctrl+L)'}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
         </div>
 
         {/* Console View Area */}
         <div
-          className={`text-neutral-100 font-mono text-sm p-3 sm:p-4 flex flex-col overflow-hidden cursor-text w-full max-w-full relative select-none ${
+          className={`bg-neutral-50 dark:bg-[#121214] text-neutral-900 dark:text-neutral-100 font-mono text-sm p-2.5 sm:p-4 flex flex-col overflow-hidden cursor-text w-full max-w-full relative select-none ${
             isFullscreen ? 'flex-1 h-full min-h-0' : 'h-[calc(100vh-19rem)] min-h-[380px] md:h-[520px]'
           }`}
           dir="ltr"
@@ -1035,22 +971,89 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
             inputRef.current?.focus({ preventScroll: true });
           }}
         >
-          {/* Terminal Console Subheader Info */}
-          <div className="flex items-center justify-between pb-2 mb-2 sm:pb-3 sm:mb-3 border-b border-white/10 shrink-0 text-xs text-neutral-400 select-none">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="flex gap-1.5 shrink-0">
-                <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-                <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-                <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+          {/* Terminal Console Subheader Info & Actions (Moved down from the tab bar) */}
+          <div className="flex items-center justify-between pb-1.5 mb-1.5 sm:pb-3 sm:mb-3 border-b border-neutral-200 dark:border-white/10 shrink-0 text-xs text-neutral-600 dark:text-neutral-400 select-none gap-1 sm:gap-2">
+            {/* Left: Indicator dots & CWD path */}
+            <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+              <div className="flex gap-1 shrink-0">
+                <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-red-500/80"></div>
+                <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-yellow-500/80"></div>
+                <div className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-green-500/80"></div>
               </div>
-              <span className="ml-1 sm:ml-2 font-mono text-[11px] sm:text-xs text-gray-400 truncate max-w-[180px] sm:max-w-md select-none">
-                root@linux-server:~ {activeTab?.cwd}
+              <span className="ml-0.5 font-mono text-[9px] sm:text-xs text-neutral-600 dark:text-gray-400 truncate max-w-[100px] xs:max-w-[150px] sm:max-w-md select-none">
+                root@server:~ {activeTab?.cwd}
+              </span>
+              <span className="hidden md:inline-flex items-center gap-1 text-[9px] sm:text-[10px] text-neutral-500 dark:text-gray-500 uppercase tracking-widest shrink-0 ml-1 select-none">
+                <span>•</span>
+                <span>{activeTab?.isExecuting ? '🔴 Stream Attached' : '🟢 Ready'}</span>
               </span>
             </div>
-            <div className="flex items-center gap-2 text-[9px] sm:text-[10px] text-gray-500 uppercase tracking-widest shrink-0 ml-1 sm:ml-2 select-none">
-              <span className="font-semibold text-neutral-400">{activeTab?.title}</span>
-              <span>•</span>
-              <span>{activeTab?.isExecuting ? '🔴 Stream Attached' : '🟢 Ready'}</span>
+
+            {/* Right: Terminal Action Controls (Compact for mobile) */}
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 select-none text-xs">
+              {/* Clear / Trash Button */}
+              <button
+                type="button"
+                onClick={() => handleClear(activeTab?.id)}
+                className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-md sm:rounded-lg bg-white dark:bg-white/5 hover:bg-rose-50 dark:hover:bg-rose-500/20 text-neutral-600 dark:text-neutral-300 hover:text-rose-600 dark:hover:text-rose-400 border border-neutral-200 dark:border-white/5 shadow-xs dark:shadow-none transition cursor-pointer"
+                title={t.clearTerminal || 'پاکسازی صفحه (Ctrl+L)'}
+              >
+                <Trash2 className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5" />
+              </button>
+
+              {/* Copy Output Button */}
+              <button
+                type="button"
+                onClick={handleCopyLogs}
+                className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-md sm:rounded-lg bg-white dark:bg-white/5 hover:bg-neutral-100 dark:hover:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white border border-neutral-200 dark:border-white/5 shadow-xs dark:shadow-none transition cursor-pointer"
+                title={t.copyOutput || 'کپی خروجی تب فعلی'}
+              >
+                {copied ? <Check className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5" />}
+              </button>
+
+              {/* Font Size Zoom Controls */}
+              <div className="flex items-center bg-white dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-md sm:rounded-lg p-0.5 text-xs select-none shadow-xs dark:shadow-none">
+                <button
+                  type="button"
+                  onClick={handleZoomOut}
+                  disabled={fontSizeIdx <= 0}
+                  className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-30 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition cursor-pointer"
+                  title={t.zoomOut || 'کوچک‌نمایی قلم (Ctrl+-)'}
+                >
+                  <ZoomOut className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetZoom}
+                  className="px-1 sm:px-1.5 py-0.5 text-[8px] sm:text-[10px] font-mono font-medium text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-white/10 rounded transition cursor-pointer"
+                  title={t.resetFontSize || 'اندازه پیش‌فرض قلم (Ctrl+0)'}
+                >
+                  {FONT_SIZES[fontSizeIdx].label}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleZoomIn}
+                  disabled={fontSizeIdx >= FONT_SIZES.length - 1}
+                  className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded hover:bg-neutral-100 dark:hover:bg-white/10 disabled:opacity-30 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition cursor-pointer"
+                  title={t.zoomIn || 'بزرگ‌نمایی قلم (Ctrl++)'}
+                >
+                  <ZoomIn className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5" />
+                </button>
+              </div>
+
+              {/* Fullscreen Toggle Button */}
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-md sm:rounded-lg border transition cursor-pointer ${
+                  isFullscreen
+                    ? 'bg-blue-500/15 dark:bg-blue-600/30 border-blue-500/40 text-blue-600 dark:text-blue-300 hover:bg-blue-500/25 dark:hover:bg-blue-600/50'
+                    : 'bg-white dark:bg-white/5 border-neutral-200 dark:border-white/10 hover:bg-neutral-100 dark:hover:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white shadow-xs dark:shadow-none'
+                }`}
+                title={isFullscreen ? (t.exitFullscreen || 'خروج از تمام‌صفحه (Esc / F11)') : (t.fullscreen || 'حالت تمام‌صفحه (F11)')}
+              >
+                {isFullscreen ? <Minimize2 className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5" /> : <Maximize2 className="h-2.5 w-2.5 sm:h-3.5 sm:w-3.5" />}
+              </button>
             </div>
           </div>
 
@@ -1069,34 +1072,34 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                   isTouchingRef.current = false;
                 }, 500);
               }}
-              className="flex-1 overflow-y-auto space-y-3 sm:space-y-4 pr-1 scrollbar-thin scrollbar-thumb-neutral-800 w-full max-w-full overscroll-contain touch-pan-y select-text cursor-text"
+              className="flex-1 overflow-y-auto space-y-3 sm:space-y-4 pr-1 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-800 w-full max-w-full overscroll-contain touch-pan-y select-text cursor-text"
               style={{ WebkitOverflowScrolling: 'touch' }}
             >
               {activeTab?.history.map((item) => (
                 <div key={item.id} className="space-y-1 w-full max-w-full overflow-hidden select-text">
-                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-neutral-400 text-xs select-text">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-neutral-500 dark:text-neutral-400 text-xs select-text">
                     <div className="flex items-center gap-1 min-w-0 shrink-0 text-[11px] sm:text-xs">
-                      <span className="text-emerald-400 font-bold shrink-0">root@server</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold shrink-0">root@server</span>
                       <span>:</span>
-                      <span className="text-blue-400 font-medium truncate max-w-[90px] sm:max-w-[280px]" title={item.cwd}>
+                      <span className="text-blue-600 dark:text-blue-400 font-medium truncate max-w-[90px] sm:max-w-[280px]" title={item.cwd}>
                         {item.cwd}
                       </span>
-                      <span className="text-neutral-200">$</span>
+                      <span className="text-neutral-700 dark:text-neutral-200 font-bold">$</span>
                     </div>
-                    <span className={`text-neutral-100 font-semibold whitespace-pre-wrap break-all ${FONT_SIZES[fontSizeIdx].classCmd} font-mono select-text cursor-text selection:bg-blue-600/50 selection:text-white`}>
+                    <span className={`text-neutral-900 dark:text-neutral-100 font-semibold whitespace-pre-wrap break-all ${FONT_SIZES[fontSizeIdx].classCmd} font-mono select-text cursor-text selection:bg-blue-600/30 dark:selection:bg-blue-600/50 selection:text-neutral-900 dark:selection:text-white`}>
                       {item.command}
                     </span>
                     {item.isRunning && (
-                      <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full animate-pulse shrink-0 select-none">
+                      <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full animate-pulse shrink-0 select-none">
                         <Radio className="h-2.5 w-2.5 sm:h-3 sm:w-3" /> LIVE
                       </span>
                     )}
-                    <span className="text-neutral-600 text-[10px] sm:text-[11px] font-sans ml-auto shrink-0 select-none">
+                    <span className="text-neutral-400 dark:text-neutral-600 text-[10px] sm:text-[11px] font-sans ml-auto shrink-0 select-none">
                       {item.timestamp}
                     </span>
                   </div>
 
-                  <pre className={`text-neutral-300 whitespace-pre-wrap break-words ${FONT_SIZES[fontSizeIdx].classPre} pl-2 border-l-2 border-neutral-800 bg-neutral-900/40 p-2 sm:p-2.5 rounded-r-lg font-mono overflow-x-auto max-w-full select-text cursor-text selection:bg-blue-600/50 selection:text-white`}>
+                  <pre className={`text-neutral-800 dark:text-neutral-300 whitespace-pre-wrap break-words ${FONT_SIZES[fontSizeIdx].classPre} pl-2 border-l-2 border-neutral-300 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/40 p-2 sm:p-2.5 rounded-r-lg font-mono overflow-x-auto max-w-full select-text cursor-text border border-neutral-200/60 dark:border-transparent selection:bg-blue-600/30 dark:selection:bg-blue-600/50 selection:text-neutral-900 dark:selection:text-white`}>
                     {item.output || (item.isRunning ? 'در حال دریافت لاگ‌های اولیه...' : 'دستور بدون خروجی متنی اجرا شد.')}
                   </pre>
                 </div>
@@ -1120,8 +1123,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
           </div>
 
           {/* Mobile & Quick Keys Toolbar */}
-          <div className="pt-2 border-t border-white/5 flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none text-xs shrink-0 select-none">
-            <span className="text-[10px] text-neutral-500 font-mono shrink-0 px-1">KEYS:</span>
+          <div className="pt-2 border-t border-neutral-200 dark:border-white/5 flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none text-xs shrink-0 select-none">
+            <span className="text-[10px] text-neutral-500 dark:text-neutral-500 font-mono shrink-0 px-1">KEYS:</span>
             {[
               { label: '↑', action: () => navigateHistory('up') },
               { label: '↓', action: () => navigateHistory('down') },
@@ -1146,7 +1149,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                 key={idx}
                 type="button"
                 onClick={k.action}
-                className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 active:bg-blue-600 text-neutral-300 hover:text-white font-mono text-[11px] border border-white/10 shrink-0 cursor-pointer transition"
+                className="px-2 py-1 rounded bg-white dark:bg-white/5 hover:bg-neutral-100 dark:hover:bg-white/10 active:bg-blue-600 text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white font-mono text-[11px] border border-neutral-200 dark:border-white/10 shrink-0 cursor-pointer transition shadow-xs dark:shadow-none"
               >
                 {k.label}
               </button>
@@ -1154,14 +1157,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
           </div>
 
           {/* Active Input Line */}
-          <div className={`flex ${activeTab?.command?.includes('\n') ? 'items-start' : 'items-center'} gap-1.5 sm:gap-2 pt-2 border-t border-white/5 w-full max-w-full overflow-hidden shrink-0`}>
+          <div className={`flex ${activeTab?.command?.includes('\n') ? 'items-start' : 'items-center'} gap-1.5 sm:gap-2 pt-2 border-t border-neutral-200 dark:border-white/5 w-full max-w-full overflow-hidden shrink-0`}>
             <div className={`flex items-center gap-1 text-xs shrink-0 select-none ${activeTab?.command?.includes('\n') ? 'pt-1' : ''}`}>
-              <span className="text-emerald-400 font-bold text-[11px] sm:text-xs">root@server</span>
-              <span className="text-neutral-400">:</span>
-              <span className="text-blue-400 font-medium truncate max-w-[70px] sm:max-w-[200px] text-[11px] sm:text-xs" title={activeTab?.cwd}>
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold text-[11px] sm:text-xs">root@server</span>
+              <span className="text-neutral-500 dark:text-neutral-400">:</span>
+              <span className="text-blue-600 dark:text-blue-400 font-medium truncate max-w-[70px] sm:max-w-[200px] text-[11px] sm:text-xs" title={activeTab?.cwd}>
                 {activeTab?.cwd}
               </span>
-              <span className="text-neutral-200">$</span>
+              <span className="text-neutral-700 dark:text-neutral-200 font-bold">$</span>
             </div>
             <textarea
               ref={inputRef}
@@ -1177,14 +1180,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                   ? (isFa ? 'ورودی/پاسخ دستور را تایپ کرده و Enter بزنید...' : 'Type input/response and press Enter...')
                   : `${t.cmdPlaceholder} (Shift+Enter = ${isFa ? 'خط جدید' : 'New Line'})`
               }
-              className={`flex-1 min-w-[60px] bg-transparent border-none outline-none resize-none leading-relaxed py-0.5 font-mono ${FONT_SIZES[fontSizeIdx].classCmd} focus:ring-0 scrollbar-thin scrollbar-thumb-neutral-700 ${
-                activeTab?.isExecuting ? 'text-amber-300 placeholder-amber-500/70' : 'text-neutral-100 placeholder-neutral-500'
+              className={`flex-1 min-w-[60px] bg-transparent border-none outline-none resize-none leading-relaxed py-0.5 font-mono ${FONT_SIZES[fontSizeIdx].classCmd} focus:ring-0 scrollbar-thin scrollbar-thumb-neutral-300 dark:scrollbar-thumb-neutral-700 ${
+                activeTab?.isExecuting ? 'text-amber-600 dark:text-amber-300 placeholder-amber-500/70' : 'text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500'
               }`}
               autoFocus
             />
             <div className={`flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto select-none ${activeTab?.command?.includes('\n') ? 'pt-0.5' : ''}`}>
               {activeTab?.command?.includes('\n') && (
-                <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[10px] font-mono shrink-0">
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-600 dark:text-blue-300 text-[10px] font-mono shrink-0">
                   {activeTab.command.split('\n').length} {isFa ? 'خط' : 'lines'}
                 </span>
               )}
@@ -1192,7 +1195,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ token, lang }) => {
                 <button
                   type="button"
                   onClick={() => handleDetach(activeTab.id)}
-                  className="px-2 py-1 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 text-xs font-sans transition cursor-pointer flex items-center gap-1 shrink-0"
+                  className="px-2 py-1 rounded bg-amber-500/10 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 dark:hover:bg-amber-500/30 text-xs font-sans transition cursor-pointer flex items-center gap-1 shrink-0"
                   title="Ctrl+A+D"
                 >
                   <LogOut className="h-3 w-3" />
