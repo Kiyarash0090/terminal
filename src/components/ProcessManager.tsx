@@ -6,6 +6,7 @@ import { GithubUploadDeployModal } from './GithubUploadDeployModal';
 import { ProjectUpdateModal } from './ProjectUpdateModal';
 import { PythonPackagesModal } from './PythonPackagesModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
+import { useAppActiveState } from '../hooks/useAppActiveState';
 
 interface ProcessManagerProps {
   token: string | null;
@@ -14,6 +15,7 @@ interface ProcessManagerProps {
 }
 
 export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang, isActive = true }) => {
+  const { isSleeping } = useAppActiveState();
   const t = translations[lang];
   const [tasks, setTasks] = useState<BackgroundTask[]>([]);
   const [sysProcesses, setSysProcesses] = useState<SystemProcess[]>([]);
@@ -96,19 +98,17 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang, isA
   };
 
   useEffect(() => {
-    if (!token || !isActive) return;
+    if (!token || !isActive || isSleeping) return;
     fetchProcesses();
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchProcesses();
-      }
-    }, 4500);
+      fetchProcesses();
+    }, 6000);
     return () => clearInterval(interval);
-  }, [token, isActive]);
+  }, [token, isActive, isSleeping]);
 
   // Live log polling when log modal is open for a running task
   useEffect(() => {
-    if (!activeTaskLogs) return;
+    if (!activeTaskLogs || isSleeping) return;
 
     const pollLogs = async () => {
       try {
@@ -137,14 +137,14 @@ export const ProcessManager: React.FC<ProcessManagerProps> = ({ token, lang, isA
           });
         }
       } catch (err) {
-        console.error('Failed to poll logs:', err);
+        // silent
       }
     };
 
     pollLogs();
-    const logInterval = setInterval(pollLogs, 1200);
+    const logInterval = setInterval(pollLogs, 2500);
     return () => clearInterval(logInterval);
-  }, [activeTaskLogs?.id, token, tasks]);
+  }, [activeTaskLogs?.id, token, tasks, isSleeping]);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     const container = modalLogContainerRef.current;

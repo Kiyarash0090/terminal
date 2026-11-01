@@ -42,6 +42,7 @@ import { Language } from '../types';
 interface YouTubeManagerProps {
   lang: Language;
   token?: string | null;
+  isActive?: boolean;
 }
 
 interface YouTubeQualityOption {
@@ -107,7 +108,7 @@ interface YouTubeDownloadJob {
   completedAt?: number;
 }
 
-export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: propToken }) => {
+export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: propToken, isActive = true }) => {
   const getEffectiveToken = () => propToken || localStorage.getItem('serverdash_token') || '';
   const isFa = lang === 'fa';
 
@@ -250,6 +251,7 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
   };
 
   useEffect(() => {
+    if (!isActive) return;
     fetchVpnStatus();
     fetchPotStatus();
     fetchDownloads();
@@ -257,9 +259,9 @@ export const YouTubeManager: React.FC<YouTubeManagerProps> = ({ lang, token: pro
       fetchVpnStatus();
       fetchPotStatus();
       fetchDownloads();
-    }, 4000);
+    }, 8000);
     return () => clearInterval(interval);
-  }, [propToken]);
+  }, [isActive, propToken]);
 
   // Handle Clipboard Paste
   const handlePasteClipboard = async () => {

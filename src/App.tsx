@@ -3,6 +3,7 @@ import { AuthState, Language, ThemeMode, User } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { FooterResourceMonitor } from './components/FooterResourceMonitor';
+import { useAppActiveState } from './hooks/useAppActiveState';
 
 // Resilient lazy load with auto-retry on dynamic chunk update
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -52,6 +53,7 @@ const LoginModal = lazyWithRetry(() => import('./components/LoginModal'), 'Login
 const TelegramBotModal = lazyWithRetry(() => import('./components/TelegramBotModal'), 'TelegramBotModal');
 
 export default function App() {
+  const { isSleeping, isIdle, wakeUp } = useAppActiveState();
   const [lang, setLang] = useState<Language>(() => {
     const saved = localStorage.getItem('serverdash_lang');
     return (saved === 'fa' || saved === 'en') ? saved : 'fa';
@@ -202,6 +204,26 @@ export default function App() {
           onOpenTelegramBot={() => setIsTelegramBotOpen(true)}
           onLogout={handleLogout}
         />
+
+        {/* Eco / Standby Active Banner (When tab is idle or hidden) */}
+        {isSleeping && (
+          <div className="bg-emerald-500/10 dark:bg-emerald-950/40 border-b border-emerald-500/20 px-3 py-1.5 text-xs text-emerald-800 dark:text-emerald-300 flex items-center justify-between backdrop-blur-sm z-30 transition-all">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <span className="text-sm shrink-0">💤</span>
+              <span className="truncate">
+                {lang === 'fa'
+                  ? 'حالت خواب سبک فعال است (تمام درخواست‌های پس‌زمینه متوقف شدند تا مصرف CPU به صفر برسد). اسکریپت‌های در حال اجرای شما بدون توقف در سرور ادامه دارند.'
+                  : 'Light Standby active (all background polling paused to reach 0% idle CPU). Your running server scripts continue uninterrupted.'}
+              </span>
+            </div>
+            <button
+              onClick={wakeUp}
+              className="px-2.5 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-[11px] shrink-0 transition cursor-pointer shadow-xs active:scale-95"
+            >
+              {lang === 'fa' ? 'بیدار کردن برنامه' : 'Wake Up'}
+            </button>
+          </div>
+        )}
 
         {/* Main Layout Area */}
         <div className="flex-1 flex flex-col md:flex-row min-h-[calc(100vh-5.5rem)] sm:min-h-[calc(100vh-6rem)] md:min-h-[calc(100vh-6.5rem)]">

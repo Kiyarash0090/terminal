@@ -577,69 +577,103 @@ class VPNManager:
             except Exception:
                 pass
 
+        p = None
         try:
-            import shutil
-            ytdlp_cmd = []
-            if shutil.which("yt-dlp"):
-                ytdlp_cmd = ["yt-dlp"]
-            else:
-                try:
-                    import yt_dlp
-                    ytdlp_cmd = [sys.executable, "-m", "yt_dlp"]
-                except ImportError:
-                    try:
-                        inst = await asyncio.create_subprocess_exec(
-                            sys.executable, "-m", "pip", "install", "yt-dlp",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
-                        )
-                        await asyncio.wait_for(inst.communicate(), timeout=25)
-                    except Exception:
-                        pass
-                    ytdlp_cmd = [sys.executable, "-m", "yt_dlp"]
-
-            # Ensure bgutil-ytdlp-pot-provider and yt-dlp are installed
+            # -------------------------------------------------------------
+            # فاز ۱: تست سبک و فوق‌العاده سریع اتصال به یوتیوب با curl (Pre-Check)
+            # هدف: جلوگیری از مصرف شدید CPU و RAM ناشی از اجرای بی‌دلیل yt-dlp روی کانفیگ‌های قطع یا فیلتر
+            # -------------------------------------------------------------
+            pre_ok = False
+            pre_code = ""
             try:
-                import bgutil_ytdlp_pot_provider  # noqa: F401
-            except ImportError:
+                p_pre = await asyncio.create_subprocess_exec(
+                    "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                    "--socks5-hostname", f"127.0.0.1:{port}",
+                    "--connect-timeout", "3",
+                    "--max-time", "4",
+                    "https://www.youtube.com/generate_204",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                out_c, _ = await asyncio.wait_for(p_pre.communicate(), timeout=4.5)
+                pre_code = out_c.decode("utf-8", errors="ignore").strip()
+                if pre_code in ("204", "200", "302"):
+                    pre_ok = True
+                elif pre_code == "429":
+                    return False, "🚫 آی‌پی این کانفیگ توسط یوتیوب محدود یا بلاک شده است (HTTP 429 Too Many Requests / Bot Blocked)", {
+                        "bot_detected": True,
+                        "precheck": True,
+                        "log": "HTTP 429: Too Many Requests received from YouTube generate_204 (IP Bot Blocked)."
+                    }
+                elif pre_code in ("403", "400", "405"):
+                    pre_ok = True
+            except Exception:
+                pass
+
+            if not pre_ok:
+                # یک تلاش سریع به www.google.com جهت اطمینان از سلامت کلی پروکسی
+                google_ok = False
                 try:
-                    inst = await asyncio.create_subprocess_exec(
-                        sys.executable, "-m", "pip", "install", "bgutil-ytdlp-pot-provider", "yt-dlp",
+                    p_pre2 = await asyncio.create_subprocess_exec(
+                        "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                        "--socks5-hostname", f"127.0.0.1:{port}",
+                        "--connect-timeout", "2.5",
+                        "--max-time", "3",
+                        "https://www.google.com/generate_204",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE
                     )
-                    await asyncio.wait_for(inst.communicate(), timeout=20)
+                    out_g, _ = await asyncio.wait_for(p_pre2.communicate(), timeout=3.5)
+                    g_code = out_g.decode("utf-8", errors="ignore").strip()
+                    if g_code in ("204", "200"):
+                        google_ok = True
                 except Exception:
                     pass
+
+                if not google_ok:
+                    return False, "❌ عدم اتصال به سرورهای یوتیوب (پروکسی متصل نشد یا قطع است)", {
+                        "bot_detected": False,
+                        "precheck": True,
+                        "log": f"Pre-check connection failed (HTTP {pre_code or 'no response'}). Proxy failed to establish connection to YouTube."
+                    }
+
+            # -------------------------------------------------------------
+            # فاز ۲: اجرای سبک yt-dlp با کمترین سربار حافظه و پردازنده
+            # -------------------------------------------------------------
+            import shutil
+            ytdlp_cmd = ["yt-dlp"] if shutil.which("yt-dlp") else [sys.executable, "-m", "yt_dlp"]
 
             cmd = ytdlp_cmd + [
                 "--proxy", f"socks5://127.0.0.1:{port}",
                 "-f", "worst/b/worstvideo+worstaudio",
-                "--max-filesize", "500k",
-                "-N", "4",
+                "--max-filesize", "250k",
+                "--concurrent-fragments", "1",
                 "--no-playlist",
                 "--no-part",
+                "--no-cache-dir",
+                "--no-mtime",
                 "--socket-timeout", "5",
                 "--retries", "1",
                 "--fragment-retries", "1",
-                "--remote-components", "ejs:github",
+                "--downloader-args", "ffmpeg_i:-threads 1",
                 "-o", str(out_file),
+                video_url.strip() or "https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R"
             ]
 
-            if shutil.which("node"):
-                cmd.extend(["--js-runtimes", "node"])
-
-            cmd.append(video_url.strip() or "https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R")
+            env = os.environ.copy()
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            env["NODE_OPTIONS"] = "--max-old-space-size=64"
 
             t_start = time.time()
             p = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
 
             try:
-                stdout, stderr = await asyncio.wait_for(p.communicate(), timeout=20)
+                stdout, stderr = await asyncio.wait_for(p.communicate(), timeout=15)
                 elapsed_sec = max(0.05, time.time() - t_start)
                 stdout_str = stdout.decode("utf-8", errors="ignore")
                 stderr_str = stderr.decode("utf-8", errors="ignore")
@@ -688,13 +722,13 @@ class VPNManager:
                         except Exception:
                             pass
 
-                    eff_bytes = total_bytes if total_bytes > 0 else (500.0 * 1024.0)
+                    eff_bytes = total_bytes if total_bytes > 0 else (250.0 * 1024.0)
                     if speed_kbps <= 0:
                         speed_kbps = (eff_bytes / 1024.0) / max(0.1, elapsed_sec)
 
                     speed_kbps = round(speed_kbps, 1)
                     speed_mbps = round((speed_kbps * 8.0) / 1000.0, 2)
-                    size_kb = round(total_bytes / 1024.0, 1) if total_bytes > 0 else 500.0
+                    size_kb = round(total_bytes / 1024.0, 1) if total_bytes > 0 else 250.0
 
                     if speed_mbps >= 1.0:
                         speed_display = f"{round(speed_mbps, 1)} Mbps ({round(speed_kbps / 1024.0, 2)} MB/s)"
@@ -733,14 +767,15 @@ class VPNManager:
             except asyncio.TimeoutError:
                 out_p, err_p = b"", b""
                 try:
-                    p.kill()
-                    out_p, err_p = await p.communicate()
+                    if p:
+                        p.kill()
+                        out_p, err_p = await p.communicate()
                 except Exception:
                     pass
                 partial_log = ((out_p.decode("utf-8", errors="ignore") if out_p else "") + "\n" + (err_p.decode("utf-8", errors="ignore") if err_p else "")).strip()
-                return False, "⏰ زمان پاسخ‌دهی کانفیگ پایان یافت (Timeout 45s - سرعت سرور پایین است یا پروکسی متصل نشد)", {
+                return False, "⏰ زمان پاسخ‌دهی کانفیگ پایان یافت (Timeout 15s - سرعت سرور پایین است یا پروکسی متصل نشد)", {
                     "bot_detected": False,
-                    "log": partial_log or "Timeout error after 45 seconds. Proxy server did not respond or connection was too slow."
+                    "log": partial_log or "Timeout error after 15 seconds. Proxy server did not respond or connection was too slow."
                 }
 
         except Exception as e:
@@ -749,12 +784,20 @@ class VPNManager:
                 "log": f"Exception in test_ytdlp: {e}"
             }
         finally:
+            if p and p.returncode is None:
+                try:
+                    p.kill()
+                    await asyncio.wait_for(p.wait(), timeout=1.0)
+                except Exception:
+                    pass
             for tf in CONFIGS_DIR.glob(f"_yt_test_{port}*"):
                 try:
                     tf.unlink()
                 except Exception:
                     pass
             await self._kill_test_proc(proc)
+            import gc
+            gc.collect()
 
     async def test_all_configs(self) -> List[Tuple[int, str, bool, str]]:
         """
@@ -772,13 +815,15 @@ class VPNManager:
 
         n = len(configs)
 
-        # ---- مرحله ۱: پینگ موازی ----
+        # ---- مرحله ۱: پینگ موازی با کنترل حداکثر همزمانی جهت جلوگیری از اشغال رم و پردازنده ----
+        sem = asyncio.Semaphore(4)
         async def start_and_ping(i: int):
-            proc, port, err = await self._run_v2ray_for_test(i)
-            if err:
-                return i, None, None, None, err, None
-            ping = await self._measure_ping(port)
-            return i, proc, port, ping, None, None
+            async with sem:
+                proc, port, err = await self._run_v2ray_for_test(i)
+                if err:
+                    return i, None, None, None, err, None
+                ping = await self._measure_ping(port)
+                return i, proc, port, ping, None, None
 
         ping_outcomes = await asyncio.gather(*[start_and_ping(i) for i in range(n)], return_exceptions=True)
 

@@ -3,6 +3,7 @@ import { Globe, Power, RefreshCw, RotateCw, Plus, Trash2, Check, AlertCircle, Za
 import { Language } from '../types';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { UndoToast } from './UndoToast';
+import { useAppActiveState } from '../hooks/useAppActiveState';
 
 const PING_CACHE_KEY = 'vpn_ping_test_results';
 
@@ -285,6 +286,7 @@ interface VpnManagerProps {
 
 export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = true }) => {
   const isFa = lang === 'fa';
+  const { isSleeping } = useAppActiveState();
 
   const [status, setStatus] = useState<{
     running: boolean;
@@ -315,6 +317,29 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
   const [copiedAllConfigs, setCopiedAllConfigs] = useState(false);
   const [testVideoUrl, setTestVideoUrl] = useState('https://youtu.be/bL7rIsAt0P0?is=xZiN13Z4w_6M877R');
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Optimized YouTube Testing States
+  const [ytConcurrency, setYtConcurrency] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('vpn_yt_concurrency');
+      return saved ? Math.min(3, Math.max(1, parseInt(saved, 10))) : 2;
+    } catch {
+      return 2;
+    }
+  });
+  const [skipDeadConfigsForYt, setSkipDeadConfigsForYt] = useState<boolean>(true);
+  const [ytTestProgress, setYtTestProgress] = useState<{ current: number; total: number } | null>(null);
+  const cancelTestRef = useRef<boolean>(false);
+
+  const handleConcurrencyChange = (val: number) => {
+    const clamped = Math.min(3, Math.max(1, val));
+    setYtConcurrency(clamped);
+    try {
+      localStorage.setItem('vpn_yt_concurrency', String(clamped));
+    } catch {
+      // silent
+    }
+  };
 
   // New Config Modal/Input
   const [showAddModal, setShowAddModal] = useState(false);
@@ -511,7 +536,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
   };
 
   useEffect(() => {
-    if (!token || !isActive) return;
+    if (!token || !isActive || isSleeping) return;
     fetchStatus();
     fetchConfigs();
     fetchIpInfo();
@@ -519,23 +544,23 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
       fetchVpnLogs();
     }
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !isSleeping) {
         fetchStatus();
       }
-    }, 10000);
+    }, 15000);
     return () => clearInterval(interval);
-  }, [token, isActive]);
+  }, [token, isActive, isSleeping]);
 
-  // Polling for Xray / V2Ray Logs: ONLY when VPN is running, logs modal is open, and tab is active
+  // Polling for Xray / V2Ray Logs: ONLY when VPN is running, logs modal is open, and tab is active and not sleeping
   useEffect(() => {
-    if (!isActive || !autoRefreshLogs || !token || !status.running || !showLogsModal) return;
+    if (!isActive || !autoRefreshLogs || !token || !status.running || !showLogsModal || isSleeping) return;
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !isSleeping) {
         fetchVpnLogs(true);
       }
-    }, 3000);
+    }, 5000);
     return () => clearInterval(interval);
-  }, [isActive, autoRefreshLogs, token, status.running, showLogsModal]);
+  }, [isActive, autoRefreshLogs, token, status.running, showLogsModal, isSleeping]);
 
   // Auto scroll to bottom
   useEffect(() => {
@@ -1141,28 +1166,100 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
     if (configs.length === 0) return;
     try {
       setTestingAll(true);
-      const currentConfigs = [...configs];
+      cancelTestRef.current = false;
 
-      // Mark all configs as queued for yt-dlp test
-      setConfigs(prev => prev.map(c => ({
-        ...c,
-        testResult: {
-          success: false,
-          output: isFa ? '▶️ در صف تست yt-dlp یوتیوب...' : '▶️ Queued for yt-dlp test...',
-          loading: true
-        }
-      })));
-
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < currentConfigs.length; i += BATCH_SIZE) {
-        const chunk = currentConfigs.slice(i, i + BATCH_SIZE);
-        await Promise.all(
-          chunk.map(c => handleTestYtdlp(c.index))
-        );
+      // فیلتر هوشمند: اگر کاربر مایل باشد، کانفیگ‌های بدون پینگ یا قطع شده نادیده گرفته می‌شوند
+      let targetConfigs = [...configs];
+      if (skipDeadConfigsForYt) {
+        targetConfigs = targetConfigs.filter(c => !(c.testResult && !c.testResult.loading && !c.testResult.success));
       }
+
+      if (targetConfigs.length === 0) {
+        setMessage({
+          type: 'error',
+          text: isFa
+            ? 'همه کانفیگ‌ها در وضعیت قطع یا ناموفق هستند و بر اساس فیلتر انتخاب‌شده نادیده گرفته شدند.'
+            : 'All configs are marked as failed and were skipped by the filter.'
+        });
+        return;
+      }
+
+      const targetIndices = new Set(targetConfigs.map(c => c.index));
+
+      // مشخص کردن کانفیگ‌های هدف در صف بررسی
+      setConfigs(prev => prev.map(c => {
+        if (targetIndices.has(c.index)) {
+          return {
+            ...c,
+            testResult: {
+              success: false,
+              output: isFa ? '▶️ در صف تست بهینه یوتیوب...' : '▶️ Queued for optimized YouTube test...',
+              loading: true
+            }
+          };
+        }
+        return c;
+      }));
+
+      setYtTestProgress({
+        current: 0,
+        total: targetConfigs.length
+      });
+
+      let nextIndex = 0;
+      let finishedCount = 0;
+      const concurrency = Math.max(1, Math.min(3, ytConcurrency));
+
+      // Worker Pool بهینه با محدودیت همزمانی دقیق جهت کنترل مصرف RAM و CPU
+      const runWorker = async () => {
+        while (nextIndex < targetConfigs.length && !cancelTestRef.current) {
+          const cfg = targetConfigs[nextIndex++];
+          if (!cfg) break;
+
+          try {
+            await handleTestYtdlp(cfg.index);
+          } catch (e) {
+            // Handled inside handleTestYtdlp
+          }
+
+          finishedCount++;
+          setYtTestProgress(prev => prev ? {
+            ...prev,
+            current: finishedCount
+          } : null);
+
+          if (cancelTestRef.current) break;
+
+          // توقف کوتاه جهت آزادسازی پورت‌ها و سوکت‌های شبکه و تمیزکاری GC در سیستم‌عامل
+          await new Promise(r => setTimeout(r, 120));
+        }
+      };
+
+      const workers = Array.from({ length: concurrency }).map(() => runWorker());
+      await Promise.all(workers);
+
+      // در صورت لغو دستی تست توسط کاربر، وضعیت لودینگ کانفیگ‌های باقی‌مانده پاک می‌شود
+      if (cancelTestRef.current) {
+        setConfigs(prev => prev.map(c => {
+          if (c.testResult?.loading) {
+            return {
+              ...c,
+              testResult: {
+                success: false,
+                output: isFa ? '⏸️ تست متوقف شد' : '⏸️ Test stopped',
+                loading: false
+              }
+            };
+          }
+          return c;
+        }));
+      }
+
       setConfigs(prev => sortConfigs(prev));
     } finally {
       setTestingAll(false);
+      setYtTestProgress(null);
+      cancelTestRef.current = false;
     }
   };
 
@@ -1170,6 +1267,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
     if (configs.length === 0) return;
     try {
       setTestingAll(true);
+      cancelTestRef.current = false;
 
       const currentConfigs = [...configs];
 
@@ -1185,12 +1283,14 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
 
       const pingResultsMap: Record<number, { success: boolean; output: string; ping?: number }> = {};
 
-      // Phase 1: Test ping in batches of 5 concurrently
-      const BATCH_SIZE = 5;
+      // Phase 1: Test ping in controlled batches (3 concurrent to reduce CPU/RAM spike)
+      const BATCH_SIZE = 3;
       for (let i = 0; i < currentConfigs.length; i += BATCH_SIZE) {
+        if (cancelTestRef.current) break;
         const chunk = currentConfigs.slice(i, i + BATCH_SIZE);
 
         await Promise.all(chunk.map(async (c) => {
+          if (cancelTestRef.current) return;
           setConfigs(prev => prev.map(item => item.index === c.index ? {
             ...item,
             testResult: {
@@ -1229,10 +1329,13 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
             updateSingleConfigResult(c.index, { success: false, output: err.message || 'Error', loading: false });
           }
         }));
+
+        await new Promise(r => setTimeout(r, 80));
       }
 
       // Phase 2: Speed test one by one (sequential)
       for (const c of currentConfigs) {
+        if (cancelTestRef.current) break;
         const pingRes = pingResultsMap[c.index];
         if (!pingRes || !pingRes.success) {
           continue;
@@ -1263,6 +1366,24 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
         } catch (err: any) {
           // Keep ping result
         }
+
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      if (cancelTestRef.current) {
+        setConfigs(prev => prev.map(c => {
+          if (c.testResult?.loading) {
+            return {
+              ...c,
+              testResult: {
+                success: false,
+                output: isFa ? '⏸️ تست متوقف شد' : '⏸️ Test stopped',
+                loading: false
+              }
+            };
+          }
+          return c;
+        }));
       }
 
       setConfigs(prev => sortConfigs(prev));
@@ -1270,6 +1391,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
       setMessage({ text: err.message, type: 'error' });
     } finally {
       setTestingAll(false);
+      cancelTestRef.current = false;
     }
   };
 
@@ -1742,33 +1864,74 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
 
         {/* Live Testing Progress Banner */}
         {testingAll && (
-          <div className="bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/30 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-xs">
-            <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200 font-medium">
-              <Zap className="h-4 w-4 sm:h-5 sm:w-5 text-amber-500 animate-bounce shrink-0" />
-              <div>
-                <div className="font-bold text-xs sm:text-sm">
-                  {isFa ? 'تست گروهی کانفیگ‌ها در حال انجام است...' : 'Testing configs in parallel...'}
+          <div className="bg-amber-500/10 dark:bg-amber-500/20 border border-amber-500/30 rounded-xl p-3 sm:p-4 flex flex-col gap-3 text-xs shadow-xs">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200 font-medium">
+                <Zap className="h-4 w-4 sm:h-5 sm:w-5 text-amber-500 animate-bounce shrink-0" />
+                <div>
+                  <div className="font-bold text-xs sm:text-sm flex items-center gap-2 flex-wrap">
+                    <span>
+                      {ytTestProgress
+                        ? (isFa ? 'تست بهینه یوتیوب در حال اجراست...' : 'Optimized YouTube test in progress...')
+                        : (isFa ? 'تست گروهی کانفیگ‌ها در حال انجام است...' : 'Testing configs...')}
+                    </span>
+                    {ytTestProgress && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/25 font-bold">
+                        {isFa
+                          ? `یوتیوب: ${ytTestProgress.current} از ${ytTestProgress.total} (${Math.round((ytTestProgress.current / Math.max(1, ytTestProgress.total)) * 100)}%)`
+                          : `YouTube: ${ytTestProgress.current}/${ytTestProgress.total} (${Math.round((ytTestProgress.current / Math.max(1, ytTestProgress.total)) * 100)}%)`}
+                      </span>
+                    )}
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 font-medium">
+                      {isFa ? `همزمانی کنترل‌شده: ${ytConcurrency}` : `Concurrency: ${ytConcurrency}`}
+                    </span>
+                  </div>
+                  <div className="text-[10px] sm:text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5">
+                    {isFa
+                      ? `کانفیگ‌های سالم: ${configs.filter(c => c.testResult?.success).length} | کانفیگ‌های خراب: ${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length}`
+                      : `Passed: ${configs.filter(c => c.testResult?.success).length} | Failed: ${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length}`}
+                  </div>
                 </div>
-                <div className="text-[10px] sm:text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5">
-                  {isFa
-                    ? `کانفیگ‌های سالم: ${configs.filter(c => c.testResult?.success).length} | کانفیگ‌های خراب: ${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length}`
-                    : `Passed: ${configs.filter(c => c.testResult?.success).length} | Failed: ${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length}`}
-                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    cancelTestRef.current = true;
+                  }}
+                  className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 dark:bg-white/10 dark:hover:bg-white/20 active:scale-95 text-white font-bold rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+                  title={isFa ? 'توقف آنی فرایند تست' : 'Stop Test'}
+                >
+                  <Pause className="h-3.5 w-3.5 text-amber-400" />
+                  <span>{isFa ? 'توقف تست' : 'Stop Test'}</span>
+                </button>
+
+                {configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length > 0 && (
+                  <button
+                    onClick={handleDeleteFailedConfigs}
+                    className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold rounded-lg text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-md shrink-0"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>
+                      {isFa
+                        ? `حذف خرابی‌ها (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`
+                        : `Delete Failed (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`}
+                    </span>
+                  </button>
+                )}
               </div>
             </div>
 
-            {configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length > 0 && (
-              <button
-                onClick={handleDeleteFailedConfigs}
-                className="w-full sm:w-auto px-3.5 py-2 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold rounded-lg text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-md animate-pulse shrink-0"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span>
-                  {isFa
-                    ? `حذف فوری کانفیگ‌های خراب (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`
-                    : `Delete Failed Now (${configs.filter(c => c.testResult && !c.testResult.loading && !c.testResult.success).length})`}
-                </span>
-              </button>
+            {ytTestProgress && (
+              <div className="w-full bg-amber-500/20 dark:bg-black/30 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-red-500 dark:bg-red-400 h-full transition-all duration-300"
+                  style={{
+                    width: `${Math.min(100, Math.round((ytTestProgress.current / Math.max(1, ytTestProgress.total)) * 100))}%`
+                  }}
+                />
+              </div>
             )}
           </div>
         )}
@@ -2364,25 +2527,102 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
               </button>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                {isFa ? 'لینک ویدیو تست یوتیوب (yt-dlp + PO Token):' : 'YouTube Test Video URL (yt-dlp + PO Token):'}
-              </label>
-              <input
-                type="text"
-                value={testVideoUrl}
-                onChange={(e) => setTestVideoUrl(e.target.value)}
-                placeholder="https://youtu.be/..."
-                className="w-full px-3 py-2 bg-neutral-50 dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-red-500 text-neutral-900 dark:text-white dir-ltr text-left"
-              />
-              <p className="text-[10px] text-neutral-500 dark:text-neutral-400 flex items-center gap-1 pt-0.5">
-                <span className="text-amber-500 font-bold">⚡</span>
-                <span>
-                  {isFa
-                    ? 'کانفیگ‌های سالم با بالاترین سرعت دانلود به‌طور خودکار در صدر لیست قرار می‌گیرند.'
-                    : 'Healthy configs with the highest speed are automatically ranked to the top.'}
-                </span>
-              </p>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
+                  {isFa ? 'لینک ویدیو تست یوتیوب (yt-dlp + PO Token):' : 'YouTube Test Video URL (yt-dlp + PO Token):'}
+                </label>
+                <input
+                  type="text"
+                  value={testVideoUrl}
+                  onChange={(e) => setTestVideoUrl(e.target.value)}
+                  placeholder="https://youtu.be/..."
+                  className="w-full px-3 py-2 bg-neutral-50 dark:bg-white/5 border border-neutral-300 dark:border-white/10 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-red-500 text-neutral-900 dark:text-white dir-ltr text-left"
+                />
+              </div>
+
+              {/* Concurrency & Resource Optimization Setting */}
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center justify-between">
+                  <span>{isFa ? 'کنترل همزمانی و بهینه‌سازی پردازنده و رم:' : 'Concurrency & Resource Optimization:'}</span>
+                  <span className="text-[10px] font-mono text-neutral-500">
+                    {ytConcurrency === 1 ? (isFa ? 'حداقل مصرف رم' : 'Lowest RAM') : ytConcurrency === 2 ? (isFa ? 'پیشنهادی' : 'Recommended') : (isFa ? 'سریع‌تر' : 'Faster')}
+                  </span>
+                </label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleConcurrencyChange(1)}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-medium border text-center transition cursor-pointer flex flex-col items-center gap-0.5 ${
+                      ytConcurrency === 1
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 shadow-xs'
+                        : 'bg-neutral-50 dark:bg-white/5 border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="font-bold">{isFa ? '۱ همزمان' : '1 Worker'}</span>
+                    <span className="text-[9px] opacity-80">{isFa ? 'فوق‌العاده کم‌مصرف' : 'Ultra Low RAM'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConcurrencyChange(2)}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-medium border text-center transition cursor-pointer flex flex-col items-center gap-0.5 ${
+                      ytConcurrency === 2
+                        ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                        : 'bg-neutral-50 dark:bg-white/5 border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="font-bold">{isFa ? '۲ همزمان' : '2 Workers'}</span>
+                    <span className="text-[9px] opacity-80">{isFa ? 'پیشنهادی و متعادل' : 'Balanced'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConcurrencyChange(3)}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-medium border text-center transition cursor-pointer flex flex-col items-center gap-0.5 ${
+                      ytConcurrency === 3
+                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300 shadow-xs'
+                        : 'bg-neutral-50 dark:bg-white/5 border-neutral-200 dark:border-white/10 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="font-bold">{isFa ? '۳ همزمان' : '3 Workers'}</span>
+                    <span className="text-[9px] opacity-80">{isFa ? 'سرعت بیشتر' : 'Fast'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Skip Dead / Disconnected Configs Toggle */}
+              <div className="bg-neutral-50 dark:bg-white/5 border border-neutral-200 dark:border-white/10 rounded-xl p-2.5">
+                <label className="flex items-start gap-2.5 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    checked={skipDeadConfigsForYt}
+                    onChange={(e) => setSkipDeadConfigsForYt(e.target.checked)}
+                    className="mt-0.5 rounded text-red-600 focus:ring-red-500 cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-semibold text-neutral-800 dark:text-neutral-200">
+                      {isFa ? 'صرف‌نظر از کانفیگ‌های بدون پینگ یا قطع' : 'Skip disconnected / dead configs'}
+                    </span>
+                    <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                      {isFa
+                        ? 'کانفیگ‌هایی که در تست پینگ ناموفق بوده‌اند نادیده گرفته می‌شوند تا پردازنده و رم سیستم بیهوده درگیر نشود.'
+                        : 'Configs that failed the ping test are skipped to prevent unnecessary CPU and memory load.'}
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              {/* Optimization Details Box */}
+              <div className="rounded-xl p-2.5 bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/25 text-[11px] text-emerald-800 dark:text-emerald-300 space-y-1">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>{isFa ? 'بهینه‌سازی هوشمند مصرف منابع فعال است:' : 'Smart Resource Optimization Active:'}</span>
+                </div>
+                <ul className="text-[10px] text-emerald-700 dark:text-emerald-300/90 list-disc list-inside space-y-0.5 pr-1">
+                  <li>{isFa ? 'تست پیش‌بررسی فوق‌سبک (Pre-Check) برای فیلتر آنی سرورهای قطع' : 'Lightweight Pre-Check eliminates dead proxies in 1 sec'}</li>
+                  <li>{isFa ? 'دانلود نمونه بسیار کم‌حجم (۲۵۰KB) با ۱ ترد جهت کاهش مصرف CPU' : 'Single-threaded micro sample (250KB) saves memory & CPU'}</li>
+                  <li>{isFa ? 'آزادسازی خودکار حافظه (GC) و سوکت‌های سیستم‌عامل پس از هر کانفیگ' : 'Immediate garbage collection & socket cleanup after each run'}</li>
+                </ul>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-200 dark:border-white/10">
@@ -2403,7 +2643,7 @@ export const VpnManager: React.FC<VpnManagerProps> = ({ token, lang, isActive = 
                 className="px-4 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
               >
                 <Video className="h-3.5 w-3.5" />
-                <span>{isFa ? 'شروع تست همه کانفیگ‌ها' : 'Start YouTube Test'}</span>
+                <span>{isFa ? 'شروع تست بهینه همه کانفیگ‌ها' : 'Start Optimized Test'}</span>
               </button>
             </div>
           </div>

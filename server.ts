@@ -178,6 +178,14 @@ setInterval(() => {
 
 app.use('/api', rateLimiter);
 
+// Activity Tracker: Records the timestamp of the latest client HTTP request.
+// Allows server to know when no browser tab is active/connected.
+let lastClientRequestTime = Date.now();
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  lastClientRequestTime = Date.now();
+  next();
+});
+
 // Content Security Policy headers
 app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -4489,6 +4497,12 @@ async function checkAndSendSystemAlerts() {
     const cfg = JSON.parse(raw);
     if (!cfg.alerts_enabled || !cfg.bot_token || !cfg.admin_user_id) return;
 
+    // When no client has contacted the server for over 2 minutes, relax alert check frequency
+    // (User background scripts in backgroundTasks continue running completely unaffected)
+    if (Date.now() - lastClientRequestTime > 120_000 && Math.random() > 0.33) {
+      return;
+    }
+
     const cooldownMs = (cfg.cooldown_minutes || 5) * 60 * 1000;
     const now = Date.now();
 
@@ -5116,7 +5130,8 @@ async function startPoTokenServer() {
     } catch {}
 
     const nodeBin = process.execPath || 'node';
-    const child = spawn(nodeBin, [scriptPath, '--port', String(poTokenState.port), '--host', '127.0.0.1'], {
+    // Limit memory allocation for the PO Token server to 96MB to prevent RAM bloat
+    const child = spawn(nodeBin, ['--max-old-space-size=96', scriptPath, '--port', String(poTokenState.port), '--host', '127.0.0.1'], {
       cwd: path.dirname(path.dirname(scriptPath)),
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe']
@@ -5153,18 +5168,22 @@ async function startPoTokenServer() {
 
       if (poTokenState.desiredRunning) {
         poTokenState.restartCount++;
-        addPoTokenLog(`راه‌اندازی مجدد خودکار در ۳ ثانیه... (تلاش ${poTokenState.restartCount})`);
+        addPoTokenLog(`راه‌اندازی مجدد خودکار در ۵ ثانیه... (تلاش ${poTokenState.restartCount})`);
         if (poTokenRestartTimer) clearTimeout(poTokenRestartTimer);
         poTokenRestartTimer = setTimeout(() => {
-          startPoTokenServer();
-        }, 3000);
+          if (poTokenState.desiredRunning) {
+            startPoTokenServer();
+          }
+        }, 5000);
       }
     });
 
     setTimeout(async () => {
-      const ok = await pingPoTokenServer();
-      if (ok) {
-        addPoTokenLog(`PO Token Server با موفقیت بررسی و فعال شد (Port ${poTokenState.port}).`);
+      if (poTokenState.desiredRunning) {
+        const ok = await pingPoTokenServer();
+        if (ok) {
+          addPoTokenLog(`PO Token Server با موفقیت بررسی و فعال شد (Port ${poTokenState.port}).`);
+        }
       }
     }, 2500);
 
@@ -5173,25 +5192,26 @@ async function startPoTokenServer() {
   }
 }
 
-// Watchdog: check every 30 seconds
+// Watchdog: check every 60 seconds ONLY if service is enabled
 setInterval(async () => {
   if (!poTokenState.desiredRunning) return;
   const isHealthy = await pingPoTokenServer();
-  if (!isHealthy) {
+  if (!isHealthy && poTokenState.desiredRunning) {
     addPoTokenLog('PO Token Server پاسخگو نیست، در حال راه‌اندازی مجدد...');
     startPoTokenServer();
   }
-}, 30000);
+}, 60000);
 
 // PO Token Server Endpoints
 app.get('/api/po-token/status', async (req: Request, res: Response) => {
   try {
     let isHealthy = false;
-    if (poTokenState.desiredRunning) {
+    // Do not ping loopback unless the server was intentionally requested to run
+    if (poTokenState.desiredRunning && poTokenState.isRunning) {
       isHealthy = await pingPoTokenServer();
     }
     res.json({
-      isRunning: poTokenState.desiredRunning && (isHealthy || poTokenState.isRunning),
+      isRunning: Boolean(poTokenState.desiredRunning && isHealthy),
       desiredRunning: poTokenState.desiredRunning,
       port: poTokenState.port,
       pid: poTokenState.pid,
@@ -5732,6 +5752,63 @@ if (!fs.existsSync(YOUTUBE_DOWNLOADS_DIR)) {
   try { fs.mkdirSync(YOUTUBE_DOWNLOADS_DIR, { recursive: true }); } catch {}
 }
 
+// POST /api/downloader/clear-cache - Wipe all temporary media files, yt-dlp cache, and in-memory download jobs
+app.post('/api/downloader/clear-cache', async (req: Request, res: Response) => {
+  try {
+    let deletedFiles = 0;
+
+    // 1. Clear downloaded files from disk
+    if (fs.existsSync(YOUTUBE_DOWNLOADS_DIR)) {
+      const files = fs.readdirSync(YOUTUBE_DOWNLOADS_DIR);
+      for (const f of files) {
+        if (f.startsWith('.')) continue;
+        try {
+          fs.unlinkSync(path.join(YOUTUBE_DOWNLOADS_DIR, f));
+          deletedFiles++;
+        } catch {}
+      }
+    }
+
+    // 2. Clear in-memory active & past job states
+    youtubeDownloadJobs.clear();
+
+    // 3. Clear yt-dlp disk cache
+    try {
+      await execAsync('python3 -m yt_dlp --rm-cache-dir 2>/dev/null || true');
+    } catch {}
+
+    // 4. Remove user cache folders if present
+    try {
+      const homeDir = os.homedir() || '/root';
+      const ytCache = path.join(homeDir, '.cache', 'yt-dlp');
+      if (fs.existsSync(ytCache)) {
+        fs.rmSync(ytCache, { recursive: true, force: true });
+      }
+    } catch {}
+
+    // 5. Clean up temporary video/audio snippets
+    try {
+      const tmpFiles = fs.readdirSync(os.tmpdir());
+      for (const tf of tmpFiles) {
+        if (tf.startsWith('ytsub_') || tf.startsWith('_yt_test_') || tf.startsWith('insta_')) {
+          try {
+            fs.unlinkSync(path.join(os.tmpdir(), tf));
+            deletedFiles++;
+          } catch {}
+        }
+      }
+    } catch {}
+
+    res.json({
+      success: true,
+      deletedFiles,
+      message: 'حافظه موقت و کش دانلودر با موفقیت پاکسازی شدند'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در پاکسازی کش: ' + err.message });
+  }
+});
+
 async function getVpnProxyConfig(): Promise<{ isRunning: boolean; httpProxy: string; socksProxy: string }> {
   try {
     const status = await runVpnCli('status');
@@ -5899,6 +5976,7 @@ async function getYtDlpVideoDetails(trimmedUrl: string, poPort: string, vpn: any
   const nodePath = process.execPath || '/usr/local/bin/node';
   const args = [
     '-m', 'yt_dlp',
+    '--no-cache-dir',
     '--dump-single-json',
     '--simulate',
     '--no-playlist',
@@ -6343,6 +6421,7 @@ app.post('/api/youtube/subtitle/download', async (req: Request, res: Response) =
         const nodePath = process.execPath || '/usr/local/bin/node';
         const ytdlpArgs = [
           '-m', 'yt_dlp',
+          '--no-cache-dir',
           '--skip-download',
           '--no-playlist',
           '--no-warnings',
@@ -6536,6 +6615,7 @@ app.post('/api/youtube/download', async (req: Request, res: Response) => {
 
       childArgs = [
         '-m', 'yt_dlp',
+        '--no-cache-dir',
         '--newline',
         '--no-playlist',
         '--no-warnings',
@@ -7559,70 +7639,15 @@ async function ensurePrerequisitesOnBoot() {
       fs.mkdirSync(downloadsDir, { recursive: true });
     }
 
-    // Auto-create database directory & SQLite database on deployment
+    // Ensure data and downloads directories exist
     try {
       const dataDir = path.join(process.cwd(), 'data');
       if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
       }
-      const pyDbInit = `
-import sqlite3, os
-db_dir = os.path.join(os.getcwd(), 'data')
-os.makedirs(db_dir, exist_ok=True)
-db_path = os.path.join(db_dir, 'database.sqlite')
-conn = sqlite3.connect(db_path)
-c = conn.cursor()
-c.execute('CREATE TABLE IF NOT EXISTS system_config (key TEXT PRIMARY KEY, value TEXT)')
-c.execute('CREATE TABLE IF NOT EXISTS user_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, content TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-c.execute('CREATE TABLE IF NOT EXISTS app_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-c.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-conn.commit()
-conn.close()
-`;
-      const oneLiner = pyDbInit.split('\n').filter(l => l.trim()).join('; ');
-      exec(`python3 -c "${oneLiner}"`, (dbErr) => {
-        if (!dbErr) {
-          console.log('[Database] Auto-initialized SQLite database at ./data/database.sqlite');
-        }
-      });
-    } catch (dbErr: any) {
-      console.warn('[Database] Auto-init notice:', dbErr.message);
-    }
-
-    // Ensure Deno is installed and linked to /usr/local/bin/deno
-    exec('deno --version', (denoErr) => {
-      if (denoErr) {
-        console.log('[Prerequisites] Deno not found. Auto-installing Deno...');
-        exec('curl -fsSL https://deno.land/install.sh | sh && ln -sf "$HOME/.deno/bin/deno" /usr/local/bin/deno', (installDenoErr) => {
-          if (installDenoErr) {
-            console.error('[Prerequisites] Deno auto-install warning:', installDenoErr.message);
-          } else {
-            console.log('[Prerequisites] Deno installed successfully.');
-          }
-        });
-      } else {
-        console.log('[Prerequisites] Deno verified.');
-      }
-    });
-
-    // Quick check if python packages (yt-dlp, pytubefix, aiograpi) are present
-    exec('python3 -c "import yt_dlp, pytubefix, aiograpi"', (err) => {
-      if (err) {
-        console.log('[Prerequisites] Missing Python modules (yt-dlp/pytubefix/aiograpi) detected. Auto-installing...');
-        const installCmd = 'python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider aiograpi instagrapi curl-cffi Pillow || pip3 install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider aiograpi instagrapi curl-cffi Pillow || (curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --break-system-packages && python3 -m pip install --no-cache-dir --break-system-packages yt-dlp pytubefix bgutil-ytdlp-pot-provider aiograpi instagrapi curl-cffi Pillow)';
-        exec(installCmd, (installErr) => {
-          if (installErr) {
-            console.error('[Prerequisites] Auto-install warning:', installErr.message);
-          } else {
-            console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix, aiograpi) installed successfully.');
-          }
-        });
-      } else {
-        console.log('[Prerequisites] Core Python packages (yt-dlp, pytubefix, aiograpi) verified.');
-      }
-    });
+    } catch {}
   } catch (e: any) {
-    console.warn('[Prerequisites] Boot verification skipped:', e.message);
+    console.warn('[Prerequisites] Directory init notice:', e.message);
   }
 }
 

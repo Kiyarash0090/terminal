@@ -22,6 +22,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { Language, SystemMetrics, RailwayInfo } from '../types';
+import { useAppActiveState } from '../hooks/useAppActiveState';
 
 interface FooterResourceMonitorProps {
   token: string | null;
@@ -30,12 +31,13 @@ interface FooterResourceMonitorProps {
 
 export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ token, lang }) => {
   const isFa = lang === 'fa';
+  const { isSleeping } = useAppActiveState();
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [history, setHistory] = useState<SystemMetrics[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [intervalSec, setIntervalSec] = useState<number>(3);
+  const [intervalSec, setIntervalSec] = useState<number>(6);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -227,18 +229,16 @@ export const FooterResourceMonitor: React.FC<FooterResourceMonitorProps> = ({ to
     fetchRailwayInfo(false);
   }, [fetchMetrics, fetchRailwayInfo]);
 
-  // Polling interval with document visibility support
+  // Polling interval with sleep/idle detection support
   useEffect(() => {
-    if (intervalSec <= 0) return;
+    if (intervalSec <= 0 || isSleeping) return;
 
     const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchMetrics(false);
-      }
+      fetchMetrics(false);
     }, intervalSec * 1000);
 
     return () => clearInterval(interval);
-  }, [fetchMetrics, intervalSec]);
+  }, [fetchMetrics, intervalSec, isSleeping]);
 
   // Format uptime
   const formatUptime = (totalSeconds: number | undefined): string => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bot, Save, Power, RefreshCw, Send, AlertCircle, CheckCircle2, ShieldAlert, Copy, Check, X } from 'lucide-react';
 import { Language } from '../types';
+import { useAppActiveState } from '../hooks/useAppActiveState';
 
 interface TelegramBotManagerProps {
   token: string | null;
@@ -9,6 +10,7 @@ interface TelegramBotManagerProps {
 
 export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, lang }) => {
   const isFa = lang === 'fa';
+  const { isSleeping } = useAppActiveState();
 
   const [botConfig, setBotConfig] = useState({
     bot_token: '',
@@ -30,16 +32,16 @@ export const TelegramBotManager: React.FC<TelegramBotManagerProps> = ({ token, l
   const [testAlertLoading, setTestAlertLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  // Fetch bot config and status on mount
+  // Fetch bot config and status on mount, pause polling when isSleeping
   useEffect(() => {
-    if (!token) return;
+    if (!token || isSleeping) return;
     fetchConfig();
     fetchStatus();
 
-    // Poll status every 3 seconds for live logs
-    const interval = setInterval(fetchStatus, 3000);
+    // Poll status every 8 seconds for live logs when active
+    const interval = setInterval(fetchStatus, 8000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, [token, isSleeping]);
 
   const fetchConfig = async () => {
     if (!token) return;

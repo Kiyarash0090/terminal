@@ -3,6 +3,7 @@ import { Sun, Moon, Languages, LogOut, Shield, User as UserIcon, BookOpen, Bot, 
 import { AnimatePresence, motion } from 'motion/react';
 import { Language, ThemeMode, User } from '../types';
 import { translations } from '../locales/translations';
+import { useAppActiveState } from '../hooks/useAppActiveState';
 
 const avatarImg = '/terminal_avatar.jpg';
 
@@ -31,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenTelegramBot,
   onLogout
 }) => {
+  const { isSleeping } = useAppActiveState();
   const t = translations[lang];
   const [botRunning, setBotRunning] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -95,10 +97,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       }
     };
 
-    checkBotStatus();
-    const interval = setInterval(checkBotStatus, 3500);
-    return () => clearInterval(interval);
-  }, [token]);
+    if (!isSleeping) {
+      checkBotStatus();
+      const interval = setInterval(checkBotStatus, 12000);
+      return () => clearInterval(interval);
+    }
+  }, [token, isSleeping]);
 
   const handleAction = (action: () => void) => {
     setIsMobileMenuOpen(false);

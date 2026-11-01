@@ -54,6 +54,7 @@ import { Language } from '../types';
 interface InstagramManagerProps {
   lang: Language;
   token?: string | null;
+  isActive?: boolean;
 }
 
 export interface InstagramPageInfo {
@@ -247,7 +248,7 @@ const APP_VERSION_PRESETS = [
   }
 ];
 
-export const InstagramManager: React.FC<InstagramManagerProps> = ({ lang, token: propToken }) => {
+export const InstagramManager: React.FC<InstagramManagerProps> = ({ lang, token: propToken, isActive = true }) => {
   const getEffectiveToken = () => propToken || localStorage.getItem('serverdash_token') || '';
   const isFa = lang === 'fa';
 
@@ -621,10 +622,11 @@ export const InstagramManager: React.FC<InstagramManagerProps> = ({ lang, token:
   };
 
   useEffect(() => {
+    if (!isActive) return;
     fetchAccounts();
-    const interval = setInterval(() => fetchAccounts(true), 8000);
+    const interval = setInterval(() => fetchAccounts(true), 15000);
     return () => clearInterval(interval);
-  }, [propToken]);
+  }, [isActive, propToken]);
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
