@@ -1,10 +1,6 @@
-pyrofork
 gallery-dl
 yt-dlp
-uvloop
 aiofiles
-cryptg
-tgcrypto
 requests
 apscheduler
 beautifulsoup4
@@ -14,7 +10,6 @@ aiohttp
 instagrapi
 Pillow
 brotli
-brotlicffi
 aiograpi
 mutagen
 aria2p
@@ -28,3 +23,4 @@ httpx[socks]
 aiohttp-socks
 bgutil-ytdlp-pot-provider
 pytubefix
+pyaes

@@ -2,11 +2,18 @@ FROM node:22-slim
 
 WORKDIR /app
 
+# Ensure pip doesn't complain about externally-managed-environment & prefers wheels
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_PREFER_BINARY=1
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     python3 \
     python3-pip \
+    python3-dev \
+    build-essential \
     ffmpeg \
     curl \
     unzip \
@@ -46,8 +53,8 @@ RUN npm install
 COPY . .
 
 # Install Python requirements (root requirements.txt & telegram bot requirements)
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt || pip3 install --no-cache-dir -r requirements.txt
-RUN if [ -f "telegram_bot/requirements.txt" ]; then pip3 install --no-cache-dir --break-system-packages -r "telegram_bot/requirements.txt" || pip3 install --no-cache-dir -r "telegram_bot/requirements.txt"; fi
+RUN pip3 install --no-cache-dir --break-system-packages --prefer-binary -r requirements.txt || true
+RUN if [ -f "telegram_bot/requirements.txt" ]; then pip3 install --no-cache-dir --break-system-packages --prefer-binary -r "telegram_bot/requirements.txt" || true; fi
 
 # Copy proxychains configuration
 RUN if [ -f "telegram_bot/proxychains.conf" ]; then \
@@ -61,7 +68,7 @@ RUN if [ -f "telegram_bot/proxychains.conf" ]; then \
 # Clone and install bgutil-ytdlp-pot-provider plugin and server to /opt/bgutil
 RUN git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil \
     && if [ -d "/opt/bgutil/server" ]; then cd /opt/bgutil/server && npm install && (npx tsc || true); fi \
-    && (pip3 install --no-cache-dir --break-system-packages bgutil-ytdlp-pot-provider yt-dlp || pip3 install --no-cache-dir bgutil-ytdlp-pot-provider yt-dlp || true) \
+    && (pip3 install --no-cache-dir --break-system-packages --prefer-binary bgutil-ytdlp-pot-provider yt-dlp || true) \
     && mkdir -p /root/.yt-dlp/plugins /root/yt-dlp-plugins /root/.config/yt-dlp \
     && echo '--extractor-args "youtubepot:provider=http://127.0.0.1:4416"' > /etc/yt-dlp.conf \
     && cp /etc/yt-dlp.conf /root/.config/yt-dlp/config

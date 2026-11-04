@@ -22,5 +22,5 @@ cmds = [
   "cd /opt/bgutil/server && npm install && (npx tsc || true)",
   "pip install --break-system-packages /opt/bgutil/plugin || pip install /opt/bgutil/plugin || true",
   "npm install",
-  "pip install -r requirements.txt"
+  "pip install --break-system-packages --prefer-binary -r requirements.txt || true"
 ]
