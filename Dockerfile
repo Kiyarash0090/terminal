@@ -1,11 +1,19 @@
+# ── Stage 1: باینری آمادهٔ سرور Bot API محلی ──
+# توجه: باینری telegram-bot-api از ایمیج آمادهٔ aiogram کپی می‌شود و
+# TDLib از سورس کامپایل نمی‌شود تا بیلد Railway به سقف زمانی نرسد.
+FROM aiogram/telegram-bot-api:10.5-linuxamd64 AS tgbotapi
+
 FROM node:22-slim
 
 WORKDIR /app
 
 # Ensure pip doesn't complain about externally-managed-environment & prefers wheels
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_PREFER_BINARY=1
+ENV PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_PREFER_BINARY=1 \
+    BOT_API_BASE_URL="http://127.0.0.1:8081" \
+    BOT_API_LOCAL="1" \
+    BOT_API_MAX_UPLOAD_MB="2000"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -73,15 +81,31 @@ RUN git clone https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/b
     && echo '--extractor-args "youtubepot:provider=http://127.0.0.1:4416"' > /etc/yt-dlp.conf \
     && cp /etc/yt-dlp.conf /root/.config/yt-dlp/config
 
+# باینری و کتابخانه‌های musl سرور Bot API محلی از stage قبل
+# (در مسیر ایزوله کپی می‌شوند تا با glibc دبیان تداخل نداشته باشند)
+COPY --from=tgbotapi /usr/local/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
+COPY --from=tgbotapi /lib/ /opt/tgbotapi/rootfs/lib/
+COPY --from=tgbotapi /usr/lib/ /opt/tgbotapi/rootfs/usr/lib/
+RUN ln -sf /opt/tgbotapi/rootfs/lib/ld-musl-x86_64.so.1 /lib/ld-musl-x86_64.so.1 \
+    && printf "/opt/tgbotapi/rootfs/lib\n/opt/tgbotapi/rootfs/usr/lib\n" > /etc/ld-musl-x86_64.path \
+    && ln -sf /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem \
+    && telegram-bot-api --version
 
+# ساخت دایرکتوری‌های مورد نیاز
+# --dir و --temp-dir سرور Bot API باید از قبل وجود داشته باشند، وگرنه سرور بی‌صدا می‌میرد.
+RUN mkdir -p downloads temp /opt/tgbotapi/data /opt/tgbotapi/temp
+
+# Entrypoint: سرور Bot API محلی را در پس‌زمینه بالا می‌آورد و سپس برنامه اصلی را اجرا می‌کند
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && bash -n /usr/local/bin/docker-entrypoint.sh
 
 RUN npm run build
 
-EXPOSE 3000
+EXPOSE 3000 8081
 
 ENV PORT=3000
 ENV NODE_ENV=production
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["npm", "start"]

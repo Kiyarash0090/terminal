@@ -1,0 +1,83 @@
+# ==========================================================
+# Dockerfile for Python App with YouTube POT Provider (Railway-Ready)
+#
+# توجه: باینری telegram-bot-api از ایمیج آمادهٔ aiogram کپی می‌شود و
+# TDLib از سورس کامپایل نمی‌شود. کامپایل TDLib بیش از سقف زمانی
+# بیلد Railway طول می‌کشد و با DeadlineExceeded شکست می‌خورد.
+# آن باینری musl است، پس تصویر پایه هم Alpine است.
+# ==========================================================
+
+# ── Stage 1: باینری آمادهٔ سرور Bot API محلی ──
+FROM aiogram/telegram-bot-api:10.5-linuxamd64 AS tgbotapi
+
+
+FROM python:3.11-alpine
+
+# تنظیم متغیرهای محیطی پایتون
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_PREFER_BINARY=1 \
+    YTDLP_POT_PROVIDER="http://127.0.0.1:4416" \
+    BOT_API_BASE_URL="http://127.0.0.1:8081" \
+    BOT_API_LOCAL="1" \
+    BOT_API_MAX_UPLOAD_MB="2000"
+
+# ۱. پکیج‌های سیستمی، ffmpeg و Node.js
+# libstdc++ و openssl برای باینری Bot API لازم‌اند.
+# بسته‌های -dev فقط برای کامپایل canvas (وابستگی سرور POT) لازم‌اند؛
+# روی musl نسخهٔ آمادهٔ canvas وجود ندارد و npm آن را از سورس می‌سازد.
+RUN apk add --no-cache \
+    bash \
+    curl \
+    ffmpeg \
+    libstdc++ \
+    openssl \
+    tini \
+    git \
+    build-base \
+    linux-headers \
+    python3 \
+    pkgconfig \
+    cairo-dev \
+    pango-dev \
+    jpeg-dev \
+    giflib-dev \
+    pixman-dev \
+    librsvg-dev \
+    nodejs \
+    npm
+
+# ۲. کلون مخزن Brainicism، بیلد سرور POT و اعمال کانفیگ yt-dlp
+RUN git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil \
+    && if [ -d "/opt/bgutil/server" ]; then cd /opt/bgutil/server && npm install && (npx tsc || true); fi \
+    && mkdir -p /root/.yt-dlp/plugins /root/yt-dlp-plugins /root/.config/yt-dlp /etc \
+    && echo '--extractor-args "youtubepot:provider=http://127.0.0.1:4416"' > /etc/yt-dlp.conf \
+    && cp /etc/yt-dlp.conf /root/.config/yt-dlp/config
+
+# ۳. نصب پکیج‌های پایتون
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt \
+    && pip install --no-cache-dir --prefer-binary bgutil-ytdlp-pot-provider yt-dlp
+
+# کپی سورس برنامه
+COPY . .
+
+# باینری سرور Bot API محلی از stage قبل
+COPY --from=tgbotapi /usr/local/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
+RUN telegram-bot-api --version
+
+# ساخت دایرکتوری‌های مورد نیاز
+# --dir و --temp-dir سرور Bot API باید از قبل وجود داشته باشند، وگرنه سرور بی‌صدا می‌میرد.
+RUN mkdir -p downloads temp /opt/tgbotapi/data /opt/tgbotapi/temp
+
+# ۴. Entrypoint: سرور POT و Bot API را در پس‌زمینه بالا می‌آورد.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && bash -n /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 4416 8081
+
+# استفاده از tini برای پایداری پروسس‌ها در Railway
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]

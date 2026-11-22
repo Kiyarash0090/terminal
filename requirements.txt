@@ -24,3 +24,6 @@ aiohttp-socks
 bgutil-ytdlp-pot-provider
 pytubefix
 pyaes
+pymediainfo
+pysrt
+httpx

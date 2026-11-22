@@ -4485,6 +4485,325 @@ app.post('/api/telegram-bot/stop', (req: Request, res: Response) => {
   res.json({ success: true, message: 'ربات تلگرام با موفقیت خاموش شد' });
 });
 
+async function inspectLocalBotApiServer() {
+  const baseUrl = (process.env.BOT_API_BASE_URL || 'http://127.0.0.1:8081').trim().replace(/\/+$/, '');
+  const localMode = (process.env.BOT_API_LOCAL ?? '1') === '1' || process.env.BOT_API_LOCAL === 'true';
+  const maxUploadMb = Number(process.env.BOT_API_MAX_UPLOAD_MB || '2000') || 2000;
+  const hasApiCredentials = Boolean(
+    (process.env.TELEGRAM_API_ID || process.env.API_ID) &&
+    (process.env.TELEGRAM_API_HASH || process.env.API_HASH)
+  );
+  const logFilePath = process.env.BOT_API_LOG_FILE || '/opt/tgbotapi/bot-api.log';
+
+  let binaryInstalled = false;
+  let binaryVersion: string | null = null;
+  let binaryPath: string | null = null;
+
+  for (const candidate of ['telegram-bot-api', '/usr/local/bin/telegram-bot-api']) {
+    try {
+      const { stdout, stderr } = await execFileAsync(candidate, ['--version'], { timeout: 3000 });
+      const out = (stdout || stderr || '').trim();
+      binaryInstalled = true;
+      binaryPath = candidate;
+      binaryVersion = out.split(/\r?\n/)[0]?.trim() || 'installed';
+      break;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  let processRunning = false;
+  let pid: number | null = null;
+  try {
+    const { stdout } = await execAsync('pgrep -af "(^|/)telegram-bot-api(\\s|$)" 2>/dev/null || true', { timeout: 2500 });
+    const lines = stdout
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l && !l.includes('pgrep'));
+    if (lines.length > 0) {
+      const firstPid = parseInt(lines[0].split(/\s+/)[0], 10);
+      if (!isNaN(firstPid)) {
+        processRunning = true;
+        pid = firstPid;
+      }
+    }
+  } catch {}
+
+  let httpReachable = false;
+  let httpStatus: number | null = null;
+  let latencyMs: number | null = null;
+  let httpError: string | null = null;
+  let serverSignature: string | null = null;
+
+  const startMs = Date.now();
+  try {
+    const resp = await fetch(`${baseUrl}/`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000)
+    });
+    latencyMs = Date.now() - startMs;
+    httpStatus = resp.status;
+    const text = await resp.text();
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.ok === 'boolean') {
+        httpReachable = true;
+        serverSignature = parsed.description || `HTTP ${resp.status}`;
+      } else {
+        httpError = `Unexpected JSON response (HTTP ${resp.status})`;
+      }
+    } catch {
+      httpError = `Non-JSON response from ${baseUrl} (HTTP ${resp.status})`;
+    }
+  } catch (err: any) {
+    latencyMs = Date.now() - startMs;
+    httpError = err?.cause?.code || err?.message || 'Connection failed';
+  }
+
+  let logs: string[] = [];
+  try {
+    if (fs.existsSync(logFilePath)) {
+      const rawLog = fs.readFileSync(logFilePath, 'utf-8');
+      logs = rawLog.split(/\r?\n/).filter(Boolean).slice(-40);
+    }
+  } catch {}
+
+  return {
+    baseUrl,
+    localMode,
+    maxUploadMb,
+    hasApiCredentials,
+    binaryInstalled,
+    binaryPath,
+    binaryVersion,
+    processRunning,
+    pid,
+    httpReachable,
+    httpStatus,
+    latencyMs,
+    httpError,
+    serverSignature,
+    logFilePath,
+    logs
+  };
+}
+
+app.get('/api/telegram-bot/local-api/status', async (req: Request, res: Response) => {
+  try {
+    const status = await inspectLocalBotApiServer();
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در بررسی وضعیت سرور Bot API: ' + err.message });
+  }
+});
+
+app.post('/api/telegram-bot/local-api/test', async (req: Request, res: Response) => {
+  try {
+    const status = await inspectLocalBotApiServer();
+
+    let botToken = typeof req.body?.bot_token === 'string' ? req.body.bot_token.trim() : '';
+    if (!botToken && fs.existsSync(TELEGRAM_CONFIG_PATH)) {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(TELEGRAM_CONFIG_PATH, 'utf-8'));
+        if (cfg?.bot_token) botToken = String(cfg.bot_token).trim();
+      } catch {}
+    }
+
+    if (!status.httpReachable) {
+      let friendlyError = status.httpError || `اتصال به ${status.baseUrl} برقرار نشد`;
+      if (!status.binaryInstalled) {
+        friendlyError = 'باینری telegram-bot-api در این محیط نصب نیست (محیط پیش‌نمایش Docker نیست؛ این سرور پس از دیپلوی با Dockerfile روی Railway فعال می‌شود).';
+      } else if (!status.hasApiCredentials) {
+        friendlyError = 'باینری نصب است، اما متغیرهای API_ID و API_HASH تنظیم نشده‌اند.';
+      } else if (!status.processRunning) {
+        friendlyError = 'باینری و متغیرها موجودند اما پروسس telegram-bot-api در حال اجرا نیست. دکمه «راه‌اندازی Bot API» را بزنید.';
+      }
+      return res.json({
+        success: false,
+        status,
+        test: {
+          ok: false,
+          serverAlive: false,
+          mode: 'connect',
+          latencyMs: status.latencyMs,
+          error: friendlyError
+        }
+      });
+    }
+
+    if (botToken) {
+      const t0 = Date.now();
+      try {
+        const resp = await fetch(`${status.baseUrl}/bot${encodeURIComponent(botToken)}/getMe`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(8000)
+        });
+        const testLatencyMs = Date.now() - t0;
+        const data = await resp.json();
+
+        if (data?.ok && data?.result) {
+          return res.json({
+            success: true,
+            status,
+            test: {
+              ok: true,
+              serverAlive: true,
+              mode: 'getMe',
+              latencyMs: testLatencyMs,
+              botId: data.result.id,
+              botUsername: data.result.username,
+              botName: data.result.first_name
+            }
+          });
+        }
+
+        return res.json({
+          success: false,
+          status,
+          test: {
+            ok: false,
+            serverAlive: true,
+            mode: 'getMe',
+            latencyMs: testLatencyMs,
+            errorCode: data?.error_code || resp.status,
+            error: data?.description || `HTTP ${resp.status}`
+          }
+        });
+      } catch (err: any) {
+        return res.json({
+          success: false,
+          status,
+          test: {
+            ok: false,
+            serverAlive: false,
+            mode: 'getMe',
+            latencyMs: Date.now() - t0,
+            error: err?.cause?.code || err?.message || 'getMe request failed'
+          }
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      status,
+      test: {
+        ok: true,
+        serverAlive: true,
+        mode: 'ping',
+        latencyMs: status.latencyMs,
+        description: status.serverSignature || 'Local Bot API server responded cleanly'
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در تست سرور Bot API: ' + err.message });
+  }
+});
+
+async function startLocalBotApiProcess(apiId: string, apiHash: string, binaryPath: string) {
+  const dataDir = process.env.BOT_API_DATA_DIR || '/opt/tgbotapi/data';
+  const tempDir = process.env.BOT_API_TEMP_DIR || '/opt/tgbotapi/temp';
+  const logFilePath = process.env.BOT_API_LOG_FILE || '/opt/tgbotapi/bot-api.log';
+  const portNum = parseInt(process.env.BOT_API_PORT || '8081', 10);
+  const safePort = !isNaN(portNum) && portNum > 0 && portNum <= 65535 ? String(portNum) : '8081';
+  const rawHost = (process.env.BOT_API_HTTP_IP || '127.0.0.1').trim();
+  const safeHost = /^[0-9a-fA-F.:]+$/.test(rawHost) ? rawHost : '127.0.0.1';
+  const localMode = (process.env.BOT_API_LOCAL ?? '1') === '1' || process.env.BOT_API_LOCAL === 'true';
+
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(tempDir, { recursive: true });
+  fs.mkdirSync(path.dirname(logFilePath), { recursive: true });
+
+  try {
+    await execFileAsync('pkill', ['-f', '(^|/)telegram-bot-api(\\s|$)']);
+    await new Promise(r => setTimeout(r, 400));
+  } catch {}
+
+  const args = [
+    `--api-id=${apiId}`,
+    `--api-hash=${apiHash}`,
+    `--http-ip-address=${safeHost}`,
+    `--http-port=${safePort}`,
+    `--dir=${dataDir}`,
+    `--temp-dir=${tempDir}`
+  ];
+  if (localMode) {
+    args.push('--local');
+  }
+
+  const logFd = fs.openSync(logFilePath, 'a');
+  const child = spawn(binaryPath, args, {
+    detached: true,
+    shell: false,
+    stdio: ['ignore', logFd, logFd]
+  });
+  child.unref();
+  fs.closeSync(logFd);
+
+  await new Promise(r => setTimeout(r, 800));
+  return inspectLocalBotApiServer();
+}
+
+app.post('/api/telegram-bot/local-api/start', async (req: Request, res: Response) => {
+  try {
+    const preStatus = await inspectLocalBotApiServer();
+    if (!preStatus.binaryInstalled || !preStatus.binaryPath) {
+      return res.status(400).json({
+        error: 'باینری telegram-bot-api در این محیط نصب نیست (فقط در کانتینر Docker نصب می‌شود).',
+        status: preStatus
+      });
+    }
+
+    const bodyApiId = typeof req.body?.api_id === 'string' || typeof req.body?.api_id === 'number'
+      ? String(req.body.api_id).trim()
+      : '';
+    const bodyApiHash = typeof req.body?.api_hash === 'string'
+      ? req.body.api_hash.trim()
+      : '';
+
+    const apiId = bodyApiId || (process.env.TELEGRAM_API_ID || process.env.API_ID || '').trim();
+    const apiHash = bodyApiHash || (process.env.TELEGRAM_API_HASH || process.env.API_HASH || '').trim();
+
+    if (!apiId || !apiHash) {
+      return res.status(400).json({
+        error: 'مقادیر API_ID و API_HASH تنظیم نشده‌اند. لطفاً آن‌ها را وارد کنید یا در متغیرهای محیطی سرور (Variables) قرار دهید.'
+      });
+    }
+
+    if (!/^\d{4,12}$/.test(apiId)) {
+      return res.status(400).json({ error: 'فرمت API_ID نامعتبر است (باید عددی باشد).' });
+    }
+    if (!/^[a-fA-F0-9]{16,64}$/.test(apiHash)) {
+      return res.status(400).json({ error: 'فرمت API_HASH نامعتبر است.' });
+    }
+
+    const status = await startLocalBotApiProcess(apiId, apiHash, preStatus.binaryPath);
+
+    if (status.httpReachable || status.processRunning) {
+      return res.json({ success: true, status });
+    }
+    return res.status(500).json({
+      error: 'پروسس telegram-bot-api بلافاصله متوقف شد. لاگ سرور را بررسی کنید.',
+      status
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در راه‌اندازی سرور Bot API: ' + err.message });
+  }
+});
+
+app.post('/api/telegram-bot/local-api/stop', async (req: Request, res: Response) => {
+  try {
+    try {
+      await execFileAsync('pkill', ['-f', '(^|/)telegram-bot-api(\\s|$)']);
+      await new Promise(r => setTimeout(r, 400));
+    } catch {}
+    const status = await inspectLocalBotApiServer();
+    res.json({ success: true, status });
+  } catch (err: any) {
+    res.status(500).json({ error: 'خطا در توقف سرور Bot API: ' + err.message });
+  }
+});
+
 // ---------------------- AUTOMATED SYSTEM ALERTS MONITOR ----------------------
 let lastCpuAlertTime = 0;
 let lastRamAlertTime = 0;
@@ -7646,6 +7965,19 @@ async function ensurePrerequisitesOnBoot() {
         fs.mkdirSync(dataDir, { recursive: true });
       }
     } catch {}
+
+    // Auto-start local Bot API server if binary + env credentials are present and not yet running
+    if ((process.env.BOT_API_ENABLED ?? '1') !== '0' && process.env.BOT_API_ENABLED !== 'false') {
+      const envApiId = (process.env.TELEGRAM_API_ID || process.env.API_ID || '').trim();
+      const envApiHash = (process.env.TELEGRAM_API_HASH || process.env.API_HASH || '').trim();
+      if (/^\d{4,12}$/.test(envApiId) && /^[a-fA-F0-9]{16,64}$/.test(envApiHash)) {
+        const current = await inspectLocalBotApiServer();
+        if (current.binaryInstalled && current.binaryPath && !current.processRunning && !current.httpReachable) {
+          console.log('[BotAPI] Auto-starting local telegram-bot-api server...');
+          await startLocalBotApiProcess(envApiId, envApiHash, current.binaryPath);
+        }
+      }
+    }
   } catch (e: any) {
     console.warn('[Prerequisites] Directory init notice:', e.message);
   }
